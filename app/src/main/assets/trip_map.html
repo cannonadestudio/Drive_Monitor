@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Trasa</title>
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
+<style>
+  :root {
+    --bg: rgba(255,255,255,.94); --fg: #1d2125; --muted: #626a73; --line: #dfe3e8;
+    --accent: #1a73e8; --on-accent: #fff; --chip: #eef1f4;
+    --ok: #2e9e5b; --c1: #e0b400; --c2: #f08a24; --c3: #e0412b; --c4: #8e1b6d; --na: #9aa0a6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: rgba(28,31,35,.94); --fg: #eceff2; --muted: #9aa3ad; --line: #3a4048; --chip: #2c3138; --accent: #8ab4f8; --on-accent: #0b1d3a; }
+  }
+  html, body { margin: 0; height: 100%; font: 14px/1.35 system-ui, -apple-system, Roboto, sans-serif; color: var(--fg); background: #888; }
+  #map { position: absolute; inset: 0; }
+  .card { background: var(--bg); border-radius: 14px; box-shadow: 0 2px 12px rgba(0,0,0,.18); backdrop-filter: blur(6px); }
+
+  #stats { position: absolute; top: 10px; left: 10px; right: 10px; padding: 10px 12px; }
+  #stats .row { display: flex; gap: 6px 14px; flex-wrap: wrap; }
+  #stats .k { font-size: 11px; color: var(--muted); }
+  #stats .v { font-weight: 600; font-variant-numeric: tabular-nums; }
+  #legend { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; font-size: 11px; color: var(--muted); }
+  #legend span::before { content: ""; display: inline-block; width: 10px; height: 4px; border-radius: 2px; margin-right: 4px; vertical-align: middle; background: var(--c); }
+
+  #hud { position: absolute; top: 120px; right: 10px; padding: 8px 10px; text-align: right; display: none; }
+  #hud .speed { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+  #hud .unit { font-size: 12px; color: var(--muted); }
+  #limitSign { display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: 50%;
+    border: 5px solid #d32f2f; background: #fff; color: #111; font-weight: 700; margin-top: 6px; box-sizing: border-box; }
+  #hud .meta { font-size: 12px; color: var(--muted); margin-top: 4px; font-variant-numeric: tabular-nums; }
+  #hud.over .speed { color: var(--c3); }
+
+  #panel { position: absolute; left: 10px; right: 10px; bottom: 10px; padding: 10px 12px 12px; }
+  #profile { width: 100%; height: 86px; display: block; touch-action: none; }
+  #controls { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  button { font: inherit; border: 0; border-radius: 999px; padding: 7px 12px; background: var(--chip); color: var(--fg); }
+  button.on { background: var(--accent); color: var(--on-accent); }
+  #play { width: 44px; height: 44px; padding: 0; font-size: 18px; background: var(--accent); color: var(--on-accent); flex: none; }
+  #speeds { display: flex; gap: 4px; flex-wrap: wrap; }
+  #speeds button { padding: 6px 9px; font-size: 12px; }
+  #mode { margin-left: auto; flex: none; }
+  #clock { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 6px; display: flex; justify-content: space-between; }
+
+  #resetView { position: absolute; left: 10px; display: none; padding: 8px 12px; font-weight: 600; bottom: 210px; }
+  .car { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(26,115,232,.25), 0 2px 6px rgba(0,0,0,.35); }
+  #error { position: absolute; inset: 0; display: none; place-items: center; padding: 24px; text-align: center; background: var(--bg); }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div id="stats" class="card">
+  <div class="row" id="statRow"></div>
+  <div id="legend">
+    <span style="--c:var(--ok)">w limicie</span>
+    <span style="--c:var(--c1)">+0–10</span>
+    <span style="--c:var(--c2)">+10–20</span>
+    <span style="--c:var(--c3)">+20–30</span>
+    <span style="--c:var(--c4)">&gt;+30</span>
+    <span style="--c:var(--na)">brak limitu</span>
+  </div>
+</div>
+
+<div id="hud" class="card">
+  <div class="speed" id="hudSpeed">0</div><div class="unit">km/h</div>
+  <div id="limitSign">–</div>
+  <div class="meta" id="hudEle"></div>
+</div>
+
+<div id="panel" class="card">
+  <canvas id="profile"></canvas>
+  <div id="clock"><span id="tNow">00:00</span><span id="tDist">0,0 km</span><span id="tEnd">00:00</span></div>
+  <div id="controls">
+    <button id="play" aria-label="Odtwórz">▶</button>
+    <div id="speeds"></div>
+    <button id="mode" class="on">3D</button>
+  </div>
+</div>
+
+<button id="resetView" class="card">⟲ Za autem</button>
+<div id="error"></div>
+
+<script>
+const COLORS = { na: '#9aa0a6', ok: '#2e9e5b', c1: '#e0b400', c2: '#f08a24', c3: '#e0412b', c4: '#8e1b6d' };
+const SPEEDS = [10, 30, 60, 120, 300];
+
+// ---------- dane ----------
+let trip;
+try {
+  trip = JSON.parse(window.Android ? Android.getTrip() : '{"points":[]}');
+} catch (e) { trip = { points: [] }; }
+const P = trip.points;   // [lon, lat, ele, speed, limit, t]
+
+if (P.length < 2 || !window.maplibregl) {
+  const el = document.getElementById('error');
+  el.style.display = 'grid';
+  el.textContent = !window.maplibregl
+    ? 'Nie udało się wczytać mapy – sprawdź połączenie z internetem.'
+    : 'Ta trasa ma za mało punktów, by ją pokazać.';
+  throw new Error('no data');
+}
+
+const cat = p => {
+  if (p[4] == null) return 'na';
+  const over = p[3] - p[4];
+  return over <= 0 ? 'ok' : over <= 10 ? 'c1' : over <= 20 ? 'c2' : over <= 30 ? 'c3' : 'c4';
+};
+
+const toRad = d => d * Math.PI / 180;
+function distM(a, b) {
+  const R = 6371000, dLat = toRad(b[1] - a[1]), dLon = toRad(b[0] - a[0]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function bearing(a, b) {
+  const y = Math.sin(toRad(b[0] - a[0])) * Math.cos(toRad(b[1]));
+  const x = Math.cos(toRad(a[1])) * Math.sin(toRad(b[1])) - Math.sin(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.cos(toRad(b[0] - a[0]));
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
+// skumulowany dystans
+const D = [0];
+for (let i = 1; i < P.length; i++) D.push(D[i - 1] + distM(P[i - 1], P[i]));
+const T = P.map(p => p[5]);
+const totalT = T[T.length - 1], totalD = D[D.length - 1];
+
+// wysokość: wygładzona, przewyższenia liczone z progiem 3 m (szum GPS)
+const hasEle = P.filter(p => p[2] != null).length > P.length * 0.8;
+let E = [], gain = 0, loss = 0, eMin = 0, eMax = 0;
+if (hasEle) {
+  let last = null;
+  E = P.map(p => (last = p[2] ?? last));
+  const W = 5;   // średnia krocząca
+  E = E.map((_, i) => {
+    let s = 0, n = 0;
+    for (let j = Math.max(0, i - W); j <= Math.min(E.length - 1, i + W); j++) if (E[j] != null) { s += E[j]; n++; }
+    return n ? s / n : 0;
+  });
+  let ref = E[0];
+  for (const e of E) {
+    if (e - ref > 3) { gain += e - ref; ref = e; }
+    else if (ref - e > 3) { loss += ref - e; ref = e; }
+  }
+  eMin = Math.min(...E); eMax = Math.max(...E);
+}
+
+// ---------- statystyki ----------
+const fmt = (v, d = 0) => v == null || isNaN(v) ? '–' : v.toLocaleString('pl-PL', { maximumFractionDigits: d, minimumFractionDigits: d });
+const hhmm = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}:${String(m).padStart(2, '0')} h` : `${m}:${String(s % 60).padStart(2, '0')}`; };
+const S = trip.stats || {};
+// HUD zawsze pod kartą statystyk, niezależnie od jej wysokości
+function placeHud() {
+  document.getElementById('hud').style.top = (document.getElementById('stats').offsetHeight + 18) + 'px';
+}
+window.addEventListener('resize', placeHud);
+const statItems = [
+  ['Dystans', fmt(totalD / 1000, 1) + ' km'],
+  ['Czas', hhmm(totalT)],
+  ['Max', fmt(S.maxSpeedKmh ?? Math.max(...P.map(p => p[3]))) + ' km/h'],
+  ['Ponad limit', S.overPct_0 != null ? fmt(S.overPct_0) + '%' : '–'],
+  ['> +20', S.overPct_20 != null ? fmt(S.overPct_20) + '%' : '–'],
+  ['Hamowania', S.harshBrakes ?? '–'],
+];
+if (hasEle) statItems.push(['↑ / ↓', `${fmt(gain)} / ${fmt(loss)} m`], ['Wys.', `${fmt(eMin)}–${fmt(eMax)} m`]);
+document.getElementById('statRow').innerHTML =
+  statItems.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join('');
+placeHud();
+
+// ---------- linia trasy jako odcinki w kolorze kategorii ----------
+const features = [];
+let cur = null;
+for (let i = 1; i < P.length; i++) {
+  const c = cat(P[i]);
+  if (!cur || cur.properties.cat !== c) {
+    cur = { type: 'Feature', properties: { cat: c }, geometry: { type: 'LineString', coordinates: [[P[i - 1][0], P[i - 1][1]]] } };
+    features.push(cur);
+  }
+  cur.geometry.coordinates.push([P[i][0], P[i][1]]);
+}
+
+const bounds = P.reduce((b, p) => b.extend([p[0], p[1]]), new maplibregl.LngLatBounds([P[0][0], P[0][1]], [P[0][0], P[0][1]]));
+
+// ---------- mapa ----------
+const map = new maplibregl.Map({
+  container: 'map',
+  style: 'https://tiles.openfreemap.org/styles/liberty',
+  bounds, fitBoundsOptions: { padding: { top: 130, bottom: 210, left: 40, right: 40 } },
+  maxPitch: 80,
+  attributionControl: { compact: true },
+});
+
+let is3D = true;
+const DEM = {
+  type: 'raster-dem',
+  tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+  encoding: 'terrarium', tileSize: 256, maxzoom: 15,
+  attribution: 'Teren: Mapzen / AWS Terrain Tiles',
+};
+
+map.on('load', () => {
+  map.addSource('dem', DEM);
+  map.addSource('dem-shade', DEM);    // osobne źródło dla cieniowania – zalecane przez MapLibre
+  const firstSymbol = map.getStyle().layers.find(l => l.type === 'symbol')?.id;
+  map.addLayer({ id: 'hillshade', type: 'hillshade', source: 'dem-shade',
+    paint: { 'hillshade-exaggeration': 0.35, 'hillshade-shadow-color': '#3d3d3d' } }, firstSymbol);
+
+  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features } });
+  map.addLayer({ id: 'route-casing', type: 'line', source: 'route',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: { 'line-color': '#ffffff', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 4, 15, 10] } });
+  map.addLayer({ id: 'route', type: 'line', source: 'route',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': ['match', ['get', 'cat'], 'ok', COLORS.ok, 'c1', COLORS.c1, 'c2', COLORS.c2, 'c3', COLORS.c3, 'c4', COLORS.c4, COLORS.na],
+      'line-width': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 15, 6],
+    } });
+
+  set3D(true, false);
+  seek(0);
+});
+
+function set3D(on, animate = true) {
+  is3D = on;
+  document.getElementById('mode').classList.toggle('on', on);
+  if (on) {
+    map.setTerrain({ source: 'dem', exaggeration: 1.5 });
+    if (map.setSky) map.setSky({ 'sky-color': '#9cc7f0', 'horizon-color': '#e8eef5', 'sky-horizon-blend': 0.6 });
+  } else {
+    map.setTerrain(null);
+  }
+  if (!playing && animate) map.easeTo({ pitch: on ? 55 : 0, duration: 800 });
+}
+
+// ---------- znacznik i HUD ----------
+const carEl = document.createElement('div'); carEl.className = 'car';
+const marker = new maplibregl.Marker({ element: carEl }).setLngLat([P[0][0], P[0][1]]).addTo(map);
+const hud = document.getElementById('hud');
+const startMs = trip.startMs || 0;
+
+function sampleAt(t) {
+  // wyszukiwanie binarne po czasie + interpolacja liniowa
+  let lo = 0, hi = T.length - 1;
+  if (t <= T[0]) return { i: 0, f: 0 };
+  if (t >= T[hi]) return { i: hi - 1, f: 1 };
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (T[m] <= t) lo = m; else hi = m; }
+  const span = T[hi] - T[lo];
+  return { i: lo, f: span > 0 ? (t - T[lo]) / span : 0 };
+}
+const lerp = (a, b, f) => a + (b - a) * f;
+
+function stateAt(t) {
+  const { i, f } = sampleAt(t);
+  const a = P[i], b = P[i + 1] || a;
+  return {
+    i,
+    lon: lerp(a[0], b[0], f), lat: lerp(a[1], b[1], f),
+    speed: lerp(a[3], b[3], f),
+    limit: (f < 0.5 ? a : b)[4],
+    ele: hasEle ? lerp(E[i], E[i + 1] ?? E[i], f) : null,
+    dist: lerp(D[i], D[i + 1] ?? D[i], f),
+  };
+}
+
+// punkt ~N metrów dalej po trasie – do płynnego kierunku kamery
+function pointAhead(i, dist, meters) {
+  let j = i;
+  while (j < P.length - 1 && D[j] < dist + meters) j++;
+  return P[j];
+}
+
+let tNow = 0;
+function render(t, follow, dtReal = 0) {
+  tNow = t;
+  const s = stateAt(t);
+  marker.setLngLat([s.lon, s.lat]);
+
+  hud.style.display = 'block';
+  document.getElementById('hudSpeed').textContent = Math.round(s.speed);
+  document.getElementById('limitSign').textContent = s.limit ?? '–';
+  hud.classList.toggle('over', s.limit != null && s.speed > s.limit);
+  document.getElementById('hudEle').textContent = s.ele != null ? `${Math.round(s.ele)} m n.p.m.` : '';
+
+  const clock = startMs ? new Date(startMs + t * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : hhmm(t);
+  document.getElementById('tNow').textContent = clock;
+  document.getElementById('tDist').textContent = fmt(s.dist / 1000, 1) + ' / ' + fmt(totalD / 1000, 1) + ' km';
+  document.getElementById('tEnd').textContent = startMs
+    ? new Date(startMs + totalT * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : hhmm(totalT);
+
+  if (follow) followCamera(s, dtReal);
+  drawProfile(s.dist);
+}
+
+let camBearing = null;
+function followCamera(s, dt) {
+  const target = bearing([s.lon, s.lat], pointAhead(s.i, s.dist, 120));
+  if (camBearing == null) camBearing = target;
+  // wygładzanie kąta (najkrótszą drogą po okręgu)
+  const diff = ((target - camBearing + 540) % 360) - 180;
+  camBearing = (camBearing + diff * (1 - Math.exp(-dt * 1.8)) + 360) % 360;
+
+  const cam = { center: [s.lon, s.lat] };
+  // podczas gestu dwoma palcami oddajemy kąt i nachylenie gestowi MapLibre
+  if (!twoFinger) {
+    cam.bearing = camBearing + orbit.bearing;
+    cam.pitch = is3D ? orbit.pitch : 0;
+  }
+  map.jumpTo(cam);
+}
+
+// ---------- obracanie kamery wokół auta w trakcie animacji ----------
+// 1 palec: w bok = obrót wokół auta, w górę/dół = nachylenie (w 3D)
+// 2 palce: przybliżanie, obrót i nachylenie standardowymi gestami MapLibre
+const ORBIT_DEFAULT = { bearing: 0, pitch: 62 };
+const orbit = { ...ORBIT_DEFAULT };
+let twoFinger = false, lastTouch = null;
+const resetBtn = document.getElementById('resetView');
+
+function updateResetBtn() {
+  const off = Math.abs(((orbit.bearing + 180) % 360) - 180) > 5 || Math.abs(orbit.pitch - ORBIT_DEFAULT.pitch) > 3;
+  resetBtn.style.display = playing && off ? 'block' : 'none';
+}
+resetBtn.onclick = () => { Object.assign(orbit, ORBIT_DEFAULT); updateResetBtn(); };
+
+const canvasBox = map.getCanvasContainer();
+canvasBox.addEventListener('touchstart', e => {
+  twoFinger = e.touches.length >= 2;
+  lastTouch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+canvasBox.addEventListener('touchmove', e => {
+  if (!playing || e.touches.length !== 1 || !lastTouch) return;
+  const t = e.touches[0];
+  const dx = t.clientX - lastTouch.x, dy = t.clientY - lastTouch.y;
+  lastTouch = { x: t.clientX, y: t.clientY };
+  orbit.bearing = (orbit.bearing - dx * 0.4 + 360) % 360;
+  if (is3D) orbit.pitch = Math.min(80, Math.max(0, orbit.pitch - dy * 0.25));
+  updateResetBtn();
+}, { passive: true });
+canvasBox.addEventListener('touchend', e => {
+  if (e.touches.length < 2 && twoFinger) {
+    // gest dwoma palcami skończony – zapamiętujemy nowy kąt jako przesunięcie względem kierunku jazdy
+    twoFinger = false;
+    if (playing && camBearing != null) {
+      orbit.bearing = (map.getBearing() - camBearing + 360) % 360;
+      if (is3D) orbit.pitch = map.getPitch();
+      updateResetBtn();
+    }
+  }
+  lastTouch = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+
+// ---------- odtwarzanie ----------
+let playing = false, factor = 60, lastFrame = 0;
+const playBtn = document.getElementById('play');
+
+function frame(ts) {
+  if (!playing) return;
+  const dt = lastFrame ? Math.min(0.1, (ts - lastFrame) / 1000) : 0;
+  lastFrame = ts;
+  let t = tNow + dt * factor;
+  if (t >= totalT) { t = totalT; setPlaying(false); }
+  render(t, true, dt);
+  if (playing) requestAnimationFrame(frame);
+}
+
+function setPlaying(on) {
+  playing = on;
+  playBtn.textContent = on ? '❚❚' : '▶';
+  if (on) {
+    if (tNow >= totalT) tNow = 0;
+    camBearing = null; lastFrame = 0;
+    map.dragPan.disable();           // 1 palec obraca kamerę zamiast przesuwać mapę
+    if (Math.abs(map.getZoom() - 14.6) > 2.5) map.jumpTo({ zoom: is3D ? 14.6 : 14 });
+    requestAnimationFrame(frame);
+  } else {
+    map.dragPan.enable();            // pauza: zwykła, swobodna mapa
+  }
+  updateResetBtn();
+}
+playBtn.onclick = () => setPlaying(!playing);
+document.getElementById('mode').onclick = () => set3D(!is3D);
+
+const speedsEl = document.getElementById('speeds');
+SPEEDS.forEach(v => {
+  const b = document.createElement('button');
+  b.textContent = '×' + v;
+  b.className = v === factor ? 'on' : '';
+  b.onclick = () => { factor = v; [...speedsEl.children].forEach(c => c.classList.toggle('on', c === b)); };
+  speedsEl.appendChild(b);
+});
+
+
+// ---------- profil wysokości (lub prędkości, gdy brak wysokości) ----------
+const cv = document.getElementById('profile');
+const ctx2 = cv.getContext('2d');
+const PROFILE = hasEle ? E : P.map(p => p[3]);
+const pMin = Math.min(...PROFILE), pMax = Math.max(...PROFILE);
+
+function drawProfile(cursorDist) {
+  const dpr = window.devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const c = ctx2; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
+  const css = getComputedStyle(document.documentElement);
+  const strip = 6, top = 14, bottom = h - strip - 4;
+  const x = d => d / totalD * w;
+  const y = v => bottom - (v - pMin) / Math.max(1, pMax - pMin) * (bottom - top);
+
+  // wypełnienie
+  const grad = c.createLinearGradient(0, top, 0, bottom);
+  grad.addColorStop(0, 'rgba(26,115,232,.45)'); grad.addColorStop(1, 'rgba(26,115,232,.05)');
+  c.beginPath(); c.moveTo(0, bottom);
+  const step = Math.max(1, Math.floor(PROFILE.length / (w * 2)));
+  for (let i = 0; i < PROFILE.length; i += step) c.lineTo(x(D[i]), y(PROFILE[i]));
+  c.lineTo(w, y(PROFILE[PROFILE.length - 1])); c.lineTo(w, bottom); c.closePath();
+  c.fillStyle = grad; c.fill();
+  c.beginPath();
+  for (let i = 0; i < PROFILE.length; i += step) (i ? c.lineTo : c.moveTo).call(c, x(D[i]), y(PROFILE[i]));
+  c.strokeStyle = css.getPropertyValue('--accent'); c.lineWidth = 1.5; c.stroke();
+
+  // pasek kategorii prędkości pod profilem
+  for (let i = 1; i < P.length; i++) {
+    c.fillStyle = COLORS[cat(P[i])];
+    c.fillRect(x(D[i - 1]), h - strip, Math.max(1, x(D[i]) - x(D[i - 1]) + 0.5), strip);
+  }
+
+  // opisy
+  c.fillStyle = css.getPropertyValue('--muted'); c.font = '11px system-ui, sans-serif';
+  const unit = hasEle ? ' m' : ' km/h';
+  c.fillText((hasEle ? 'Wysokość ' : 'Prędkość ') + fmt(pMax) + unit, 2, 10);
+  c.textAlign = 'right'; c.fillText('min ' + fmt(pMin) + unit, w - 2, 10); c.textAlign = 'left';
+
+  // kursor
+  const cx = x(cursorDist);
+  c.strokeStyle = css.getPropertyValue('--fg'); c.lineWidth = 1;
+  c.beginPath(); c.moveTo(cx, top - 2); c.lineTo(cx, h); c.stroke();
+}
+
+// przewijanie palcem po profilu
+function scrub(e) {
+  const r = cv.getBoundingClientRect();
+  const d = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * totalD;
+  let i = 0; while (i < D.length - 1 && D[i] < d) i++;
+  seek(T[i]);
+}
+function seek(t) {
+  if (playing) setPlaying(false);
+  render(t, false);
+}
+cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); scrub(e); });
+cv.addEventListener('pointermove', e => { if (e.buttons) scrub(e); });
+window.addEventListener('resize', () => drawProfile(stateAt(tNow).dist));
+</script>
+</body>
+</html>
