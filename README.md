@@ -4,6 +4,11 @@ Aplikacja na Androida (13+), która sama zaczyna nagrywać jazdę po połączeni
 z Bluetooth samochodu, zapisuje ślad GPX z prędkością i ograniczeniem w każdym punkcie,
 a po rozłączeniu kończy trasę i liczy statystyki bezpieczeństwa.
 
+## Budowanie
+
+Każdy push do `main` buduje APK w GitHub Actions (`.github/workflows/build.yml`).
+Gotowy plik: zakładka **Actions** → ostatni przebieg → **Artifacts** → `DriveMonitor-debug`.
+
 ## Jak to działa
 
 ```
