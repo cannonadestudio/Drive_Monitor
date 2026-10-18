@@ -8,12 +8,23 @@ android {
     namespace = "pl.drivemonitor"
     compileSdk = 35
 
+    // Stały klucz debug w repo: każdy build z GitHub Actions ma ten sam podpis,
+    // więc nowe wersje instalują się jako aktualizacja i trasy zostają w telefonie.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     defaultConfig {
         applicationId = "pl.drivemonitor"
         minSdk = 33          // Android 13 – obecność klasycznego Bluetooth w CompanionDeviceManager
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "0.2"
     }
 
     buildTypes {
