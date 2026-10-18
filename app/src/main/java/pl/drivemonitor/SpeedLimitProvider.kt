@@ -6,29 +6,35 @@ import java.io.File
 import kotlin.math.*
 
 /**
- * Ograniczenia prędkości z offline'owej bazy zbudowanej z OpenStreetMap
- * (tools/build_speed_db.py → speedlimits.sqlite).
- *
- * Plik bazy wgraj do: Android/data/pl.drivemonitor/files/speedlimits.sqlite
+ * Ograniczenia prędkości z OpenStreetMap. Dwa źródła:
+ *  1. pobierane automatycznie w trakcie jazdy (OnlineLimitCache) – domyślnie,
+ *  2. opcjonalna baza offline speedlimits.sqlite (tools/build_speed_db.py),
+ *     importowana przyciskiem w aplikacji – przydaje się bez zasięgu.
  *
  * Dopasowanie do drogi jest uproszczone: najbliższy odcinek w promieniu ~30 m,
- * z preferencją odcinków zgodnych z kierunkiem jazdy. Dla dokładnych wyników
- * w przyszłości warto podmienić to na map matching (GraphHopper / Valhalla).
+ * z preferencją odcinków zgodnych z kierunkiem jazdy.
  */
 class SpeedLimitProvider(ctx: Context) {
 
-    private val db: SQLiteDatabase? = run {
-        val f = File(ctx.getExternalFilesDir(null), DB_NAME)
-        if (f.exists()) SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY) else null
+    private val offline: SQLiteDatabase? = run {
+        val f = offlineFile(ctx)
+        if (f.exists()) runCatching {
+            SQLiteDatabase.openDatabase(f.path, null, SQLiteDatabase.OPEN_READONLY)
+        }.getOrNull() else null
     }
-
-    val isAvailable get() = db != null
+    private val online = OnlineLimitCache.get(ctx)
 
     data class Limit(val kmh: Int, val source: String)   // source: "osm" | "default:<typ drogi>"
 
     /** @param bearing kierunek jazdy w stopniach (null gdy stoimy). */
     fun lookup(lat: Double, lon: Double, bearing: Float?): Limit? {
-        val db = db ?: return null
+        if (offline == null) online.ensureAround(lat, lon, bearing)
+        val a = offline?.let { best(it, lat, lon, bearing) }
+        val b = best(online.db, lat, lon, bearing)
+        return listOfNotNull(a, b).minByOrNull { it.first }?.second
+    }
+
+    private fun best(db: SQLiteDatabase, lat: Double, lon: Double, bearing: Float?): Pair<Double, Limit>? {
         val dLat = SEARCH_M / 111_320.0
         val dLon = SEARCH_M / (111_320.0 * cos(Math.toRadians(lat)))
 
@@ -57,13 +63,13 @@ class SpeedLimitProvider(ctx: Context) {
                     score += diff * 0.5
                 }
                 if (score < bestScore) {
-                    bestScore = score
                     val highway = c.getString(5) ?: "unclassified"
-                    best = if (!c.isNull(4)) Limit(c.getInt(4), "osm")
+                    val limit = if (!c.isNull(4)) Limit(c.getInt(4), "osm")
                     else defaultFor(highway)?.let { Limit(it, "default:$highway") }
+                    if (limit != null) { bestScore = score; best = limit }
                 }
             }
-            return best
+            return best?.let { bestScore to it }
         }
     }
 
@@ -85,6 +91,8 @@ class SpeedLimitProvider(ctx: Context) {
     companion object {
         const val DB_NAME = "speedlimits.sqlite"
         private const val SEARCH_M = 30.0
+
+        fun offlineFile(ctx: Context) = File(ctx.getExternalFilesDir(null), DB_NAME)
 
         fun distanceToSegmentM(
             lat: Double, lon: Double, lat1: Double, lon1: Double, lat2: Double, lon2: Double

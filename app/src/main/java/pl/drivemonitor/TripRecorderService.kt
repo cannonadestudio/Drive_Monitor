@@ -85,7 +85,7 @@ class TripRecorderService : Service() {
             finishTrip()
             return
         }
-        Log.i(TAG, "Start trasy $name (baza limitów: ${limits.isAvailable})")
+        Log.i(TAG, "Start trasy $name")
     }
 
     private val callback = object : LocationCallback() {

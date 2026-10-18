@@ -41,6 +41,25 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.StartIntentSenderForResult()
     ) { refresh++ }
 
+    // Opcjonalna baza offline: użytkownik wybiera plik .sqlite, kopiujemy go do folderu aplikacji
+    private val importDb = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        val target = SpeedLimitProvider.offlineFile(this)
+        val tmp = java.io.File(target.parentFile, "import.tmp")
+        val msg = runCatching {
+            contentResolver.openInputStream(uri)!!.use { inp -> tmp.outputStream().use { inp.copyTo(it) } }
+            val n = android.database.sqlite.SQLiteDatabase.openDatabase(
+                tmp.path, null, android.database.sqlite.SQLiteDatabase.OPEN_READONLY
+            ).use { db -> db.rawQuery("SELECT COUNT(*) FROM segments", null).use { it.moveToFirst(); it.getLong(0) } }
+            tmp.renameTo(target)
+            "Zaimportowano bazę: $n odcinków dróg"
+        }.getOrElse { tmp.delete(); "To nie jest baza limitów DriveMonitor (${it.message})" }
+        android.widget.Toast.makeText(this, msg, android.widget.Toast.LENGTH_LONG).show()
+        refresh++
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent { MaterialTheme { Screen() } }
@@ -82,7 +101,8 @@ class MainActivity : ComponentActivity() {
                 has(Manifest.permission.BLUETOOTH_CONNECT)
         val bgOk = has(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         val car = Prefs.carName(this) ?: Prefs.carMac(this)
-        val dbOk = remember(r) { SpeedLimitProvider(this).isAvailable }
+        val offlineDb = remember(r) { SpeedLimitProvider.offlineFile(this).exists() }
+        val tiles = remember(r) { OnlineLimitCache.get(this).tileCount() }
 
         Scaffold { pad ->
             LazyColumn(
@@ -113,12 +133,17 @@ class MainActivity : ComponentActivity() {
                     ) { associateCar() }
                 }
                 item {
-                    Text(
-                        if (dbOk) "✓ Baza ograniczeń prędkości wczytana"
-                        else "⚠ Brak bazy limitów – wgraj speedlimits.sqlite do " +
-                            "Android/data/pl.drivemonitor/files/ (patrz README)",
-                        style = MaterialTheme.typography.bodySmall
-                    )
+                    Column {
+                        Text(
+                            if (offlineDb) "✓ Limity prędkości: baza offline"
+                            else "✓ Limity prędkości pobierane automatycznie z OpenStreetMap " +
+                                "podczas jazdy (zapisane obszary: $tiles)",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        TextButton(onClick = { importDb.launch(arrayOf("*/*")) }) {
+                            Text("Importuj bazę offline (opcjonalnie)", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
 
                 item {
@@ -133,7 +158,7 @@ class MainActivity : ComponentActivity() {
                 item { Text("Podsumowanie", style = MaterialTheme.typography.titleMedium) }
                 items(summary.entries.toList()) { (k, v) ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(k); Text("%.1f".format(v))
+                        Text(k); Text(if (k == "Trasy") "%.0f".format(v) else "%.1f".format(v))
                     }
                 }
 
