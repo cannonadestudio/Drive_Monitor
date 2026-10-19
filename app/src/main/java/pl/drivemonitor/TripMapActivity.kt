@@ -72,6 +72,12 @@ class TripMapActivity : ComponentActivity() {
         // więc kafelki mapy i terenu ładują się bez problemów z CORS.
         val loader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(ctx))
+            // dane trasy jako zwykły plik JSON pod tym samym adresem co strona
+            .addPathHandler("/data/", WebViewAssetLoader.PathHandler { path ->
+                if (path == "trip.json")
+                    android.webkit.WebResourceResponse("application/json", "utf-8", tripJson.byteInputStream())
+                else null
+            })
             .build()
 
         return WebView(ctx).apply {
@@ -94,7 +100,7 @@ class TripMapActivity : ComponentActivity() {
         }
     }
 
-    private inner class Bridge {
+    inner class Bridge {   // zapasowa droga przekazania danych
         @JavascriptInterface
         fun getTrip(): String = tripJson
     }

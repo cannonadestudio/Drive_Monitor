@@ -15,6 +15,9 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.4** – ekran trasy działa zawsze: dane trasy przekazywane jako plik (bez mostka JS),
+  widok uproszczony z odtwarzaniem i profilem, gdy mapa z internetu jest niedostępna,
+  komunikat o stanie mapy.
 - **0.3** – naprawa uszkodzonych GPX (także tych zapisanych wcześniej), eksport zawsze
   poprawnego pliku, odzyskiwanie przerwanych tras ze statystykami, zapasowy serwer mapy
   i komunikaty błędów zamiast pustego ekranu, ikona aplikacji, Gradle wrapper.
@@ -85,7 +88,7 @@ Dotknij trasy na liście, żeby otworzyć mapę:
 - HUD z prędkością, znakiem ograniczenia i wysokością n.p.m.,
 - **Pobierz GPX** zapisuje plik w `Pobrane/DriveMonitor`, **Udostępnij** otwiera systemowe okno udostępniania.
 
-Mapa wymaga internetu. Używa MapLibre GL JS, kafelków OpenFreeMap (OSM) i terenu
+Podkład mapy wymaga internetu; bez niego trasa, profil i odtwarzanie działają w widoku uproszczonym. Używa MapLibre GL JS, kafelków OpenFreeMap (OSM) i terenu
 z AWS Terrain Tiles – wszystko darmowe, bez kluczy API.
 
 Wysokość: na Androidzie 14+ zapisywana jest wysokość n.p.m. (wbudowany model geoidy).
