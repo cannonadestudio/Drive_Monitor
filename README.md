@@ -36,13 +36,21 @@ Bluetooth rozłączony ──► 60 s tolerancji ──► zapis i wyłączenie
 3. Ustawienia telefonu → Aplikacje → Drive Monitor → Bateria → **Bez ograniczeń**.
    Na Xiaomi/Huawei/Samsungu to konieczne, inaczej system może ubić usługę.
 
-## Baza ograniczeń prędkości
+## Ograniczenia prędkości
+
+Aplikacja sama pobiera limity z OpenStreetMap (Overpass API) dla okolicy, w której jedziesz
+(kafelki ok. 3 × 2 km, bieżący i 1,5 km przed autem), i zapisuje je w telefonie.
+Raz przejechany obszar działa potem bez internetu; dane odświeżają się po 90 dniach.
+
+### Opcjonalnie: baza offline dla całego kraju
+
+Przydaje się, gdy często jeździsz bez zasięgu. Zbuduj ją na komputerze i w aplikacji
+wybierz **Importuj bazę offline**:
 
 ```bash
 pip install osmium
 wget https://download.geofabrik.de/europe/poland-latest.osm.pbf
 python3 tools/build_speed_db.py poland-latest.osm.pbf speedlimits.sqlite
-adb push speedlimits.sqlite /sdcard/Android/data/pl.drivemonitor/files/
 ```
 
 Dla całej Polski skrypt potrzebuje kilku GB RAM i kilkunastu minut. Dla testów wystarczy

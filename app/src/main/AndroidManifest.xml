@@ -19,6 +19,10 @@
     <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
     <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
 
+    <!-- Zwolnienie z optymalizacji baterii = zgoda Androida na start usługi z tła
+         po połączeniu z Bluetooth auta (wyjątek od ograniczeń Androida 12+) -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- Kafelki mapy i terenu na ekranie trasy -->
     <uses-permission android:name="android.permission.INTERNET" />
 

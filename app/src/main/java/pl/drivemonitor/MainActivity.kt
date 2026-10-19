@@ -1,16 +1,16 @@
 package pl.drivemonitor
 
 import android.Manifest
-import android.companion.AssociationInfo
-import android.companion.AssociationRequest
-import android.companion.BluetoothDeviceFilter
-import android.companion.CompanionDeviceManager
-import android.content.IntentSender
 import android.content.pm.PackageManager
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,8 +24,31 @@ import java.io.File
 
 class MainActivity : ComponentActivity() {
 
-    private val cdm by lazy { getSystemService(CompanionDeviceManager::class.java) }
     private var refresh by mutableIntStateOf(0)
+    private var showCarPicker by mutableStateOf(false)
+
+    override fun onResume() {
+        super.onResume()
+        refresh++   // np. po powrocie z ustawień baterii
+    }
+
+    /** Sparowane urządzenia Bluetooth (nazwa, MAC), posortowane – zestaw auta jest wśród nich. */
+    @SuppressLint("MissingPermission")
+    private fun bondedDevices(): List<Pair<String, String>> = try {
+        getSystemService(BluetoothManager::class.java).adapter?.bondedDevices.orEmpty()
+            .map { (it.name ?: it.address) to it.address }
+            .sortedBy { it.first.lowercase() }
+    } catch (e: SecurityException) { emptyList() }
+
+    private fun batteryExempt() =
+        getSystemService(PowerManager::class.java).isIgnoringBatteryOptimizations(packageName)
+
+    @SuppressLint("BatteryLife")
+    private fun requestBatteryExemption() {
+        startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        )
+    }
 
     // Krok 1: lokalizacja na pierwszym planie + Bluetooth + powiadomienia
     private val basePerms = registerForActivityResult(
@@ -35,10 +58,6 @@ class MainActivity : ComponentActivity() {
     // Krok 2: lokalizacja w tle (Android wymaga osobnego pytania, po kroku 1)
     private val bgPerm = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { refresh++ }
-
-    private val associateLauncher = registerForActivityResult(
-        ActivityResultContracts.StartIntentSenderForResult()
     ) { refresh++ }
 
     // Opcjonalna baza offline: użytkownik wybiera plik .sqlite, kopiujemy go do folderu aplikacji
@@ -68,30 +87,6 @@ class MainActivity : ComponentActivity() {
     private fun has(p: String) =
         ContextCompat.checkSelfPermission(this, p) == PackageManager.PERMISSION_GRANTED
 
-    /** Systemowe okno wyboru sparowanego zestawu Bluetooth auta. */
-    private fun associateCar() {
-        val request = AssociationRequest.Builder()
-            .addDeviceFilter(BluetoothDeviceFilter.Builder().build())
-            .setSingleDevice(false)
-            .build()
-
-        cdm.associate(request, mainExecutor, object : CompanionDeviceManager.Callback() {
-            override fun onAssociationPending(intentSender: IntentSender) {
-                associateLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
-            }
-
-            override fun onAssociationCreated(info: AssociationInfo) {
-                val mac = info.deviceMacAddress?.toString() ?: return
-                Prefs.saveCar(this@MainActivity, mac, info.displayName?.toString())
-                // od teraz system sam budzi CarPresenceService przy połączeniu z autem
-                cdm.startObservingDevicePresence(mac)
-                refresh++
-            }
-
-            override fun onFailure(error: CharSequence?) { refresh++ }
-        })
-    }
-
     @Composable
     private fun Screen() {
         val r = refresh   // przebudowa po zmianie stanu
@@ -103,6 +98,8 @@ class MainActivity : ComponentActivity() {
         val car = Prefs.carName(this) ?: Prefs.carMac(this)
         val offlineDb = remember(r) { SpeedLimitProvider.offlineFile(this).exists() }
         val tiles = remember(r) { OnlineLimitCache.get(this).tileCount() }
+
+        if (showCarPicker) CarPickerDialog()
 
         Scaffold { pad ->
             LazyColumn(
@@ -130,7 +127,12 @@ class MainActivity : ComponentActivity() {
                     SetupStep(
                         "3. Bluetooth auta" + (car?.let { ": $it" } ?: ""),
                         car != null, enabled = baseOk, actionLabel = if (car == null) "Wybierz" else "Zmień"
-                    ) { associateCar() }
+                    ) { showCarPicker = true }
+                }
+                item {
+                    SetupStep("4. Bez ograniczeń baterii", batteryExempt(), enabled = car != null, actionLabel = "Zezwól") {
+                        requestBatteryExemption()
+                    }
                 }
                 item {
                     Column {
@@ -167,6 +169,40 @@ class MainActivity : ComponentActivity() {
                 items(trips) { t -> TripRow(t.gpx, t.stats) }
             }
         }
+    }
+
+    @Composable
+    private fun CarPickerDialog() {
+        val devices = remember { bondedDevices() }
+        AlertDialog(
+            onDismissRequest = { showCarPicker = false },
+            title = { Text("Wybierz Bluetooth auta") },
+            text = {
+                if (devices.isEmpty()) {
+                    Text("Brak sparowanych urządzeń. Sparuj najpierw telefon z autem w ustawieniach Bluetooth.")
+                } else {
+                    LazyColumn {
+                        items(devices) { (name, mac) ->
+                            TextButton(
+                                onClick = {
+                                    Prefs.saveCar(this@MainActivity, mac, name)
+                                    showCarPicker = false
+                                    refresh++
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(name)
+                                    Text(mac, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showCarPicker = false }) { Text("Anuluj") } }
+        )
     }
 
     @Composable
