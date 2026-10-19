@@ -127,6 +127,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        org.maplibre.android.MapLibre.getInstance(this)
         enableEdgeToEdge()
         setContent {
             DriveTheme {
@@ -439,9 +440,10 @@ class MainActivity : ComponentActivity() {
             Box(Modifier.fillMaxWidth().height(230.dp)) {
                 // trasa na prawdziwej mapie (bez internetu: z mapy offline albo sam kształt trasy)
                 key(trip.gpx.name) {
-                    AndroidView(
-                        factory = { c -> MapWeb.create(c, preview = true) { MapWeb.tripJson(c, trip.gpx) } },
-                        onRelease = { it.destroy() },
+                    MapPreview(
+                        trip.gpx,
+                        background = MaterialTheme.colorScheme.surface,
+                        gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                         modifier = Modifier.matchParentSize()
                     )
                 }
@@ -682,37 +684,31 @@ class MainActivity : ComponentActivity() {
     private fun OfflineMapSection() {
         val progress by OfflineMapDownloader.progress.collectAsState()
         val scope = rememberCoroutineScope()
-        var sizeMb by remember { mutableStateOf<Double?>(null) }
+        var regions by remember { mutableStateOf<Int?>(null) }
         val running = progress?.running == true
-        LaunchedEffect(running) {
-            sizeMb = withContext(Dispatchers.IO) { MapTileCache.get(this@MainActivity).sizeBytes() / 1_048_576.0 }
-        }
+        LaunchedEffect(running) { OfflineMapDownloader.countRegions(this@MainActivity) { regions = it } }
         var showHelp by remember { mutableStateOf(false) }
 
         SettingsGroup {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    "Mapa i teren 3D zapisują się w telefonie, gdy je oglądasz. Możesz też pobrać okolicę z góry – " +
-                        "wtedy ekran trasy pokaże mapę także bez internetu.",
+                    "Pobierz okolicę, po której jeździsz – ekran trasy i podgląd na ekranie głównym pokażą wtedy mapę także bez internetu.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "W pamięci: " + (sizeMb?.let { "%.0f MB".format(it) } ?: "…"),
+                    "Pobrane okolice: " + (regions?.toString() ?: "…"),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 progress?.let { p ->
                     if (p.running && p.total > 0) {
-                        LinearProgressIndicator(
-                            progress = { p.done.toFloat() / p.total },
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        LinearProgressIndicator(progress = { p.done.toFloat() / p.total }, modifier = Modifier.fillMaxWidth())
                     } else if (p.running) {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
                     Text(
-                        p.message + if (p.running && p.total > 0) " – ${p.done} z ${p.total}" else "",
+                        p.message + if (p.running && p.total > 0) " (${p.done} z ${p.total} plików)" else "",
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
@@ -734,11 +730,7 @@ class MainActivity : ComponentActivity() {
                         TextButton(onClick = { showHelp = !showHelp }) { Text(if (showHelp) "Ukryj instrukcję" else "Instrukcja") }
                         Spacer(Modifier.weight(1f))
                         TextButton(onClick = {
-                            scope.launch {
-                                withContext(Dispatchers.IO) { MapTileCache.get(this@MainActivity).clear() }
-                                sizeMb = 0.0
-                                toast("Usunięto mapę offline")
-                            }
+                            OfflineMapDownloader.deleteAll(this@MainActivity) { regions = 0; toast("Usunięto mapę offline") }
                         }) { Text("Usuń mapę", color = MaterialTheme.colorScheme.error) }
                     }
                 }
@@ -749,12 +741,12 @@ class MainActivity : ComponentActivity() {
                         Jak przygotować mapę na jazdę bez internetu:
                         1. Połącz się z Wi-Fi – okolica 25 km to zwykle 50–150 MB.
                         2. Wybierz „Pobierz 25 km wokół mnie” (potrzebna lokalizacja) albo „Pobierz okolicę moich tras” – obszar obejmujący wszystkie zapisane trasy.
-                        3. Zostaw ekran otwarty do końca pobierania; postęp widać powyżej. Przerwane pobieranie można wznowić – pobrane fragmenty zostają.
-                        4. Gotowe: ekran trasy i podgląd na ekranie głównym pokażą mapę i teren 3D bez internetu.
+                        3. Zostaw ekran otwarty do końca pobierania; postęp widać powyżej. Pobrane fragmenty zostają też po przerwaniu.
+                        4. Gotowe: mapa tej okolicy działa bez internetu – na ekranie trasy i w podglądzie na ekranie głównym.
 
-                        Co jest pobierane: mapa do poziomu ulic (zbliżenie 14), ikony, polskie napisy i teren 3D (zbliżenie 12). Przy większym zbliżeniu bez internetu mapa jest rozciągana z poziomu 14.
-                        Bardzo duży obszar (np. cała Polska) jest blokowany – pobieraj okolice, po których jeździsz.
-                        Mapa pochodzi z OpenStreetMap (OpenFreeMap), teren z AWS Terrain Tiles.
+                        Pobierana jest mapa do poziomu ulic (zbliżenie 14) z ikonami i polskimi napisami. Przy większym zbliżeniu bez internetu mapa jest powiększana z poziomu 14.
+                        Bardzo duży obszar (np. cała Polska) może zająć kilka GB – pobieraj okolice, po których jeździsz.
+                        Mapa: © OpenStreetMap, OpenFreeMap.
                         """.trimIndent(),
                         style = MaterialTheme.typography.bodySmall
                     )

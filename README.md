@@ -15,6 +15,10 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.8** – natywna mapa MapLibre Android zamiast mapy w przeglądarce (na części telefonów
+  WebGL w WebView rysował czarny ekran): trasa, auto, kamera 3D z pochyleniem i obrotem wokół
+  auta, profil, odtwarzanie; podgląd na ekranie głównym jako zdjęcie mapy; mapa offline przez
+  regiony offline MapLibre. Relief terenu 3D niedostępny w natywnym MapLibre – profil wysokości zostaje.
 - **0.7** – biblioteka mapy wbudowana w APK (pobierana przy budowaniu), pamięć mapy w telefonie
   (styl, kafelki, teren), pobieranie mapy offline (okolica tras / 25 km) z instrukcją
   w ustawieniach, podgląd ostatniej trasy na prawdziwej mapie na ekranie głównym.

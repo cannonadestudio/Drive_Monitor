@@ -1,6 +1,3 @@
-import java.io.InputStream
-import java.net.URI
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -26,8 +23,8 @@ android {
         applicationId = "pl.drivemonitor"
         minSdk = 33          // Android 13 – obecność klasycznego Bluetooth w CompanionDeviceManager
         targetSdk = 35
-        versionCode = 7
-        versionName = "0.7"
+        versionCode = 8
+        versionName = "0.8"
     }
 
     buildTypes {
@@ -51,32 +48,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("com.google.android.gms:play-services-location:21.3.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // natywna mapa: OpenStreetMap (OpenFreeMap), mapy offline, podglądy
+    implementation("org.maplibre.gl:android-sdk:11.8.0")
+    // tylko po to, by stare pliki MapWeb.kt / MapTileCache.kt (jeśli zostały w repo) nadal się kompilowały
     implementation("androidx.webkit:webkit:1.12.1")
 }
-
-// Biblioteka mapy (MapLibre GL JS) wbudowana w APK – ekran mapy nie musi jej pobierać w telefonie.
-// Pobierana raz przy budowaniu; gdy się nie uda, strona i tak spróbuje CDN.
-val mapLibreVersion = "4.7.1"
-val fetchMapLibre by tasks.registering {
-    val outDir = layout.projectDirectory.dir("src/main/assets/maplibre").asFile
-    doLast {
-        outDir.mkdirs()
-        for (name in listOf("maplibre-gl.js", "maplibre-gl.css")) {
-            val target = File(outDir, name)
-            if (target.length() > 1000) continue
-            val sources = listOf(
-                "https://unpkg.com/maplibre-gl@$mapLibreVersion/dist/$name",
-                "https://cdn.jsdelivr.net/npm/maplibre-gl@$mapLibreVersion/dist/$name",
-            )
-            for (url in sources) {
-                try {
-                    URI(url).toURL().openStream().use { input: InputStream -> target.outputStream().use { out -> input.copyTo(out) } }
-                    if (target.length() > 1000) { logger.lifecycle("MapLibre: pobrano $name z $url"); break }
-                } catch (e: Exception) {
-                    logger.warn("MapLibre: nie udało się pobrać $url: ${e.message}")
-                }
-            }
-        }
-    }
-}
-tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(fetchMapLibre) }
