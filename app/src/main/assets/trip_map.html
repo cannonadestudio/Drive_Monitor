@@ -4,8 +4,6 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Trasa</title>
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.css">
-<script src="https://unpkg.com/maplibre-gl@5.6.0/dist/maplibre-gl.js"></script>
 <style>
   :root {
     --bg: rgba(255,255,255,.94); --fg: #1d2125; --muted: #626a73; --line: #dfe3e8;
@@ -85,6 +83,36 @@
 <div id="error"></div>
 
 <script>
+// Każdy nieprzechwycony błąd pokazujemy na ekranie zamiast pustej mapy.
+function showError(msg) {
+  const el = document.getElementById('error');
+  el.style.display = 'grid';
+  el.textContent = msg;
+}
+window.addEventListener('error', e => {
+  console.error('JS error', e.message, e.filename, e.lineno);
+  if (!window.__started) showError('Błąd wyświetlania mapy: ' + e.message);
+});
+
+// MapLibre z CDN – gdy pierwszy serwer nie odpowie, próbujemy drugiego.
+const LIBS = [
+  'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl',
+  'https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl',
+];
+function loadLib(i) {
+  if (window.maplibregl) return start();
+  if (i >= LIBS.length) return start();          // start() pokaże komunikat o braku mapy
+  const css = document.createElement('link');
+  css.rel = 'stylesheet'; css.href = LIBS[i] + '.css';
+  document.head.appendChild(css);
+  const js = document.createElement('script');
+  js.src = LIBS[i] + '.js';
+  js.onload = () => start();
+  js.onerror = () => { console.warn('CDN niedostępny:', LIBS[i]); css.remove(); loadLib(i + 1); };
+  document.head.appendChild(js);
+}
+
+function start() {
 const COLORS = { na: '#9aa0a6', ok: '#2e9e5b', c1: '#e0b400', c2: '#f08a24', c3: '#e0412b', c4: '#8e1b6d' };
 const SPEEDS = [10, 30, 60, 120, 300];
 
@@ -98,11 +126,12 @@ const P = trip.points;   // [lon, lat, ele, speed, limit, t]
 if (P.length < 2 || !window.maplibregl) {
   const el = document.getElementById('error');
   el.style.display = 'grid';
-  el.textContent = !window.maplibregl
-    ? 'Nie udało się wczytać mapy – sprawdź połączenie z internetem.'
-    : 'Ta trasa ma za mało punktów, by ją pokazać.';
-  throw new Error('no data');
+  el.textContent = P.length < 2
+    ? `Ta trasa ma za mało punktów, by ją pokazać (${P.length}).`
+    : 'Nie udało się wczytać mapy – sprawdź połączenie z internetem i otwórz trasę ponownie.';
+  return;
 }
+let map;
 
 const cat = p => {
   if (p[4] == null) return 'na';
@@ -185,7 +214,7 @@ for (let i = 1; i < P.length; i++) {
 const bounds = P.reduce((b, p) => b.extend([p[0], p[1]]), new maplibregl.LngLatBounds([P[0][0], P[0][1]], [P[0][0], P[0][1]]));
 
 // ---------- mapa ----------
-const map = new maplibregl.Map({
+map = new maplibregl.Map({
   container: 'map',
   style: 'https://tiles.openfreemap.org/styles/liberty',
   bounds, fitBoundsOptions: { padding: { top: 130, bottom: 210, left: 40, right: 40 } },
@@ -453,6 +482,11 @@ function seek(t) {
 cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); scrub(e); });
 cv.addEventListener('pointermove', e => { if (e.buttons) scrub(e); });
 window.addEventListener('resize', () => drawProfile(stateAt(tNow).dist));
+window.__started = true;
+map.on('error', e => console.warn('Mapa:', e && e.error && e.error.message));
+} // start()
+
+loadLib(0);
 </script>
 </body>
 </html>

@@ -23,8 +23,8 @@ android {
         applicationId = "pl.drivemonitor"
         minSdk = 33          // Android 13 – obecność klasycznego Bluetooth w CompanionDeviceManager
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
     }
 
     buildTypes {

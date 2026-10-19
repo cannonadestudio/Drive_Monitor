@@ -71,7 +71,9 @@ class TripRecorderService : Service() {
     private fun beginTrip() {
         val dir = TripRepository.dir(this)
         val name = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.US).format(Date())
-        gpx = GpxWriter(File(dir, "$name.gpx"))
+        val file = File(dir, "$name.gpx")
+        gpx = GpxWriter(file)
+        currentFile = file
         stats = TripStats()
 
         val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
@@ -142,6 +144,7 @@ class TripRecorderService : Service() {
             Log.i(TAG, "Koniec trasy: %.1f km".format(stats.distanceM / 1000))
         }
         gpx = null
+        currentFile = null
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -168,7 +171,7 @@ class TripRecorderService : Service() {
             this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(R.drawable.ic_stat_car)
             .setContentTitle("Drive Monitor")
             .setContentText(text)
             .setOngoing(true)
@@ -189,6 +192,10 @@ class TripRecorderService : Service() {
     }
 
     companion object {
+        /** Plik aktualnie nagrywanej trasy (null = nic nie nagrywamy). */
+        @Volatile var currentFile: File? = null
+            private set
+
         const val ACTION_START = "pl.drivemonitor.START"
         const val ACTION_STOP = "pl.drivemonitor.STOP"
         private const val TAG = "TripRecorder"

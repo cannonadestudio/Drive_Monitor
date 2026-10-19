@@ -21,8 +21,10 @@ class TripStats {
     var harshAccels = 0; private set
 
     private var prev: TrackPoint? = null
+    var pointCount = 0; private set
 
     fun add(p: TrackPoint) {
+        pointCount++
         if (startMs == 0L) startMs = p.timeMs
         endMs = p.timeMs
         maxSpeedKmh = max(maxSpeedKmh, p.speedKmh)

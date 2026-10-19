@@ -166,7 +166,7 @@ class MainActivity : ComponentActivity() {
 
                 item { HorizontalDivider() }
                 item { Text("Trasy", style = MaterialTheme.typography.titleMedium) }
-                items(trips) { t -> TripRow(t.gpx, t.stats) }
+                items(trips) { t -> TripRow(t.gpx, t.stats, t.recording) }
             }
         }
     }
@@ -222,7 +222,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Composable
-    private fun TripRow(gpx: File, s: org.json.JSONObject?) {
+    private fun TripRow(gpx: File, s: org.json.JSONObject?, recording: Boolean) {
         Card(
             onClick = {
                 startActivity(
@@ -235,7 +235,11 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.padding(12.dp)) {
                 Text(gpx.nameWithoutExtension.replace('_', ' '), style = MaterialTheme.typography.titleSmall)
                 if (s == null) {
-                    Text("w trakcie lub przerwana", style = MaterialTheme.typography.bodySmall)
+                    Text(
+                        if (recording) "● Nagrywanie trwa – dotknij, by zobaczyć dotychczasową trasę"
+                        else "Brak danych o trasie",
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 } else {
                     Text(
                         "%.1f km · %.0f min · max %.0f km/h".format(

@@ -6,8 +6,21 @@ a po rozłączeniu kończy trasę i liczy statystyki bezpieczeństwa.
 
 ## Budowanie
 
-Każdy push do `main` buduje APK w GitHub Actions (`.github/workflows/build.yml`).
-Gotowy plik: zakładka **Actions** → ostatni przebieg → **Artifacts** → `DriveMonitor-debug`.
+- **GitHub Actions:** każdy push do `main` buduje APK (`.github/workflows/build.yml`).
+  Gotowy plik: zakładka **Actions** → ostatni przebieg → **Artifacts** → `DriveMonitor-debug`.
+- **Android Studio:** *File → Open* → folder projektu → *Run*. Z wiersza poleceń: `gradlew assembleDebug`.
+
+APK jest podpisany stałym kluczem `app/debug.keystore`, więc nowe wersje instalują się
+jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj repozytorium jako prywatne.
+
+## Historia wersji
+
+- **0.3** – naprawa uszkodzonych GPX (także tych zapisanych wcześniej), eksport zawsze
+  poprawnego pliku, odzyskiwanie przerwanych tras ze statystykami, zapasowy serwer mapy
+  i komunikaty błędów zamiast pustego ekranu, ikona aplikacji, Gradle wrapper.
+- **0.2** – limity prędkości pobierane automatycznie, wybór auta z listy sparowanych,
+  zwolnienie z optymalizacji baterii, stały klucz podpisu.
+- **0.1** – pierwsza wersja.
 
 ## Jak to działa
 
@@ -23,7 +36,7 @@ Bluetooth auta łączy się ──► CarPresenceService (Companion Device Manag
 Bluetooth rozłączony ──► 60 s tolerancji ──► zapis i wyłączenie
 ```
 
-- **Companion Device Manager** to systemowe powiązanie telefonu z zestawem Bluetooth auta.
+- **Companion Device Manager** (opcjonalnie) to systemowe powiązanie telefonu z zestawem Bluetooth auta.
   Dzięki niemu Android sam budzi aplikację (nawet gdy jest zamknięta) i pozwala
   wystartować usługę z GPS w tle, co od Androida 12 jest normalnie zablokowane.
 - **60 s tolerancji** przy rozłączeniu – radio często zrywa połączenie przy odpalaniu silnika.
@@ -32,9 +45,10 @@ Bluetooth rozłączony ──► 60 s tolerancji ──► zapis i wyłączenie
 ## Pierwsze uruchomienie
 
 1. Sparuj telefon z autem w ustawieniach Bluetooth (jeśli jeszcze nie jest).
-2. W aplikacji przejdź kroki 1–3: uprawnienia, lokalizacja „Zawsze”, wybór auta.
-3. Ustawienia telefonu → Aplikacje → Drive Monitor → Bateria → **Bez ograniczeń**.
-   Na Xiaomi/Huawei/Samsungu to konieczne, inaczej system może ubić usługę.
+2. W aplikacji przejdź kroki 1–4: uprawnienia, lokalizacja „Zawsze”, wybór auta z listy
+   sparowanych urządzeń, zwolnienie z optymalizacji baterii.
+3. Na Samsungu dodatkowo: Ustawienia → Aplikacje → Drive Monitor → Bateria → **Bez ograniczeń**,
+   inaczej system może zamknąć nagrywanie w trakcie jazdy.
 
 ## Ograniczenia prędkości
 

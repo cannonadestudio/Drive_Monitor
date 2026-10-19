@@ -79,6 +79,13 @@ class TripMapActivity : ComponentActivity() {
             settings.domStorageEnabled = true
             settings.allowFileAccess = false
             addJavascriptInterface(Bridge(), "Android")
+            // błędy strony mapy trafiają do logcat (tag TripMap)
+            webChromeClient = object : android.webkit.WebChromeClient() {
+                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
+                    android.util.Log.i("TripMap", "${m.messageLevel()}: ${m.message()} (${m.lineNumber()})")
+                    return true
+                }
+            }
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
                     loader.shouldInterceptRequest(request.url)
