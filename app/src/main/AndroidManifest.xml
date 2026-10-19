@@ -32,7 +32,7 @@
         android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
+        android:theme="@style/Theme.DriveMonitor"
         android:allowBackup="false">
 
         <activity
@@ -46,8 +46,7 @@
 
         <activity
             android:name=".TripMapActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Material.Light.NoActionBar" />
+            android:exported="false" />
 
         <!-- Udostępnianie GPX innym aplikacjom -->
         <provider

@@ -2,12 +2,16 @@ package pl.drivemonitor
 
 import android.content.Context
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /**
- * Trasy leżą w Android/data/pl.drivemonitor/files/trips/ – GPX + plik .json ze statystykami.
- * Folder jest widoczny po podłączeniu telefonu do komputera.
+ * Trasy leżą w Android/data/pl.drivemonitor/files/trips/ – GPX + plik .json ze statystykami
+ * (i uproszczonym kształtem trasy do miniatur). Folder jest widoczny po podłączeniu telefonu do komputera.
  */
 object TripRepository {
 
@@ -17,12 +21,14 @@ object TripRepository {
     private fun statsFile(gpx: File) = File(gpx.parentFile, gpx.nameWithoutExtension + ".json")
 
     fun saveStats(gpx: File, stats: TripStats) {
-        statsFile(gpx).writeText(stats.toJson().toString(2))
+        statsFile(gpx).writeText(stats.toJson().toString())
     }
 
     fun isRecording(gpx: File) = TripRecorderService.currentFile?.absolutePath == gpx.absolutePath
 
-    data class Trip(val gpx: File, val stats: JSONObject?, val recording: Boolean)
+    data class Trip(val gpx: File, val stats: JSONObject?, val recording: Boolean) {
+        val title: String get() = formatTitle(gpx.nameWithoutExtension)
+    }
 
     fun list(ctx: Context): List<Trip> =
         dir(ctx).listFiles { f -> f.extension == "gpx" }
@@ -60,26 +66,89 @@ object TripRepository {
     }
 
     fun delete(gpx: File) {
+        if (isRecording(gpx)) return
         gpx.delete(); statsFile(gpx).delete()
     }
 
-    /** Podsumowanie wszystkich tras ważone czasem jazdy ze znanym limitem. */
-    fun summary(trips: List<Trip>): Map<String, Double> {
+    /** Usuwa wszystkie zakończone trasy. Zwraca liczbę usuniętych. */
+    fun deleteAll(ctx: Context): Int {
+        var n = 0
+        dir(ctx).listFiles { f -> f.extension == "gpx" }.orEmpty().forEach {
+            if (!isRecording(it)) { delete(it); n++ }
+        }
+        return n
+    }
+
+    // ---------- miniatury ----------
+
+    /**
+     * Uproszczony kształt trasy (≤ 300 punktów) z kategorią prędkości.
+     * Liczony raz z GPX i zapisywany w pliku .json, potem czytany natychmiast.
+     * Wołać poza wątkiem głównym.
+     */
+    fun thumbnail(gpx: File): List<ThumbPoint> {
+        val js = statsFile(gpx)
+        val obj = if (js.exists()) runCatching { JSONObject(js.readText()) }.getOrNull() else null
+        obj?.optJSONArray("thumb")?.let { arr ->
+            return List(arr.length()) { i ->
+                val p = arr.getJSONArray(i)
+                ThumbPoint(p.getDouble(0), p.getDouble(1), p.getInt(2))
+            }
+        }
+        val pts = GpxParser.parse(gpx)
+        val step = maxOf(1, pts.size / 300)
+        val thumb = pts.filterIndexed { i, _ -> i % step == 0 || i == pts.size - 1 }.map {
+            ThumbPoint(it.lon, it.lat, category(it.speedKmh, it.limitKmh))
+        }
+        if (obj != null && !isRecording(gpx) && thumb.size >= 2) {
+            obj.put("thumb", JSONArray().apply {
+                thumb.forEach { put(JSONArray().put(it.lon).put(it.lat).put(it.cat)) }
+            })
+            runCatching { js.writeText(obj.toString()) }
+        }
+        return thumb
+    }
+
+    fun category(speed: Double, limit: Int?): Int {
+        if (limit == null) return 0
+        val over = speed - limit
+        return when {
+            over <= 0 -> 1
+            over <= 10 -> 2
+            over <= 20 -> 3
+            over <= 30 -> 4
+            else -> 5
+        }
+    }
+
+    private val nameFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss")
+    private val titleFormat = DateTimeFormatter.ofPattern("EEEE, d MMMM · HH:mm", Locale("pl", "PL"))
+
+    fun formatTitle(name: String): String = runCatching {
+        LocalDateTime.parse(name, nameFormat).format(titleFormat).replaceFirstChar { it.uppercase() }
+    }.getOrDefault(name.replace('_', ' '))
+
+    // ---------- podsumowanie ----------
+
+    data class Summary(
+        val trips: Int, val km: Double, val hours: Double,
+        val overPct: Double, val over20Pct: Double, val brakesPer100: Double,
+    )
+
+    /** Podsumowanie wszystkich tras ważone czasem jazdy. */
+    fun summary(trips: List<Trip>): Summary {
         val withStats = trips.mapNotNull { it.stats }
-        val km = withStats.sumOf { it.optDouble("distanceKm") }
-        val minutes = withStats.sumOf { it.optDouble("durationMin") }
+        val km = withStats.sumOf { it.optDouble("distanceKm", 0.0) }
+        val minutes = withStats.sumOf { it.optDouble("durationMin", 0.0) }
         fun weighted(key: String) =
-            if (minutes > 0) withStats.sumOf { it.optDouble(key) * it.optDouble("durationMin") } / minutes else 0.0
-        return linkedMapOf(
-            "Trasy" to withStats.size.toDouble(),
-            "Dystans [km]" to km,
-            "Czas [h]" to minutes / 60,
-            "Powyżej limitu [% czasu]" to weighted("overPct_0"),
-            "> +10 km/h [% czasu]" to weighted("overPct_10"),
-            "> +20 km/h [% czasu]" to weighted("overPct_20"),
-            "> +30 km/h [% czasu]" to weighted("overPct_30"),
-            "Ostre hamowania / 100 km" to
-                if (km > 0) withStats.sumOf { it.optInt("harshBrakes").toDouble() } * 100 / km else 0.0,
+            if (minutes > 0) withStats.sumOf { it.optDouble(key, 0.0) * it.optDouble("durationMin", 0.0) } / minutes else 0.0
+        return Summary(
+            trips = withStats.size,
+            km = km,
+            hours = minutes / 60,
+            overPct = weighted("overPct_0"),
+            over20Pct = weighted("overPct_20"),
+            brakesPer100 = if (km > 0) withStats.sumOf { it.optInt("harshBrakes").toDouble() } * 100 / km else 0.0,
         )
     }
 }

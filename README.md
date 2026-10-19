@@ -15,6 +15,9 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.5** – nowy ekran główny: karta statusu, kafelki statystyk, ostatnia trasa z dużym
+  podglądem (dotknięcie otwiera pełną mapę z odtwarzaniem), lista tras z miniaturami;
+  uprawnienia i ustawienia w menu ⚙; usuwanie pojedynczej trasy (menu ⋮) i wszystkich tras.
 - **0.4** – ekran trasy działa zawsze: dane trasy przekazywane jako plik (bez mostka JS),
   widok uproszczony z odtwarzaniem i profilem, gdy mapa z internetu jest niedostępna,
   komunikat o stanie mapy.
@@ -48,7 +51,7 @@ Bluetooth rozłączony ──► 60 s tolerancji ──► zapis i wyłączenie
 ## Pierwsze uruchomienie
 
 1. Sparuj telefon z autem w ustawieniach Bluetooth (jeśli jeszcze nie jest).
-2. W aplikacji przejdź kroki 1–4: uprawnienia, lokalizacja „Zawsze”, wybór auta z listy
+2. W aplikacji otwórz ⚙ Ustawienia i przejdź 4 kroki: uprawnienia, lokalizacja „Zawsze”, wybór auta z listy
    sparowanych urządzeń, zwolnienie z optymalizacji baterii.
 3. Na Samsungu dodatkowo: Ustawienia → Aplikacje → Drive Monitor → Bateria → **Bez ograniczeń**,
    inaczej system może zamknąć nagrywanie w trakcie jazdy.

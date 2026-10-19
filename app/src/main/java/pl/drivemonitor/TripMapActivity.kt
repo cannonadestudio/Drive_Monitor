@@ -36,7 +36,7 @@ class TripMapActivity : ComponentActivity() {
         val stats = if (statsFile.exists()) JSONObject(statsFile.readText()) else null
         tripJson = GpxParser.toMapJson(gpx.nameWithoutExtension, GpxParser.parse(gpx), stats)
 
-        setContent { MaterialTheme { Screen() } }
+        setContent { DriveTheme { Screen() } }
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -45,7 +45,7 @@ class TripMapActivity : ComponentActivity() {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(gpx.nameWithoutExtension.replace('_', ' ')) },
+                    title = { Text(TripRepository.formatTitle(gpx.nameWithoutExtension), maxLines = 1) },
                     actions = {
                         TextButton(onClick = {
                             val msg = runCatching { "Zapisano: " + GpxExport.saveToDownloads(this@TripMapActivity, gpx) }
