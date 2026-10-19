@@ -86,28 +86,32 @@ object TripRepository {
      * Liczony raz z GPX i zapisywany w pliku .json, potem czytany natychmiast.
      * Wołać poza wątkiem głównym.
      */
-    fun thumbnail(gpx: File): List<ThumbPoint> {
+    fun thumbnail(ctx: Context, gpx: File): List<ThumbPoint> {
         val js = statsFile(gpx)
         val obj = if (js.exists()) runCatching { JSONObject(js.readText()) }.getOrNull() else null
-        obj?.optJSONArray("thumb")?.let { arr ->
+        obj?.optJSONArray(THUMB_KEY)?.let { arr ->
             return List(arr.length()) { i ->
                 val p = arr.getJSONArray(i)
                 ThumbPoint(p.getDouble(0), p.getDouble(1), p.getInt(2))
             }
         }
-        val pts = GpxParser.parse(gpx)
+        // ślad bez „gwiazdek” z postojów i dopasowany do dróg
+        val pts = DisplayTrack.prepare(ctx, GpxParser.parse(gpx))
         val step = maxOf(1, pts.size / 300)
         val thumb = pts.filterIndexed { i, _ -> i % step == 0 || i == pts.size - 1 }.map {
             ThumbPoint(it.lon, it.lat, category(it.speedKmh, it.limitKmh))
         }
         if (obj != null && !isRecording(gpx) && thumb.size >= 2) {
-            obj.put("thumb", JSONArray().apply {
+            obj.remove("thumb")   // miniatura z v0.5 (bez dopasowania do dróg)
+            obj.put(THUMB_KEY, JSONArray().apply {
                 thumb.forEach { put(JSONArray().put(it.lon).put(it.lat).put(it.cat)) }
             })
             runCatching { js.writeText(obj.toString()) }
         }
         return thumb
     }
+
+    private const val THUMB_KEY = "thumb2"
 
     fun category(speed: Double, limit: Int?): Int {
         if (limit == null) return 0
@@ -131,9 +135,14 @@ object TripRepository {
     // ---------- podsumowanie ----------
 
     data class Summary(
-        val trips: Int, val km: Double, val hours: Double,
+        val trips: Int, val km: Double, val seconds: Double,
         val overPct: Double, val over20Pct: Double, val brakesPer100: Double,
-    )
+        /** km wg kategorii: brak limitu, w limicie, +0–10, +10–20, +20–30, >+30 */
+        val kmByCat: DoubleArray,
+    ) {
+        val okKm get() = kmByCat[1]
+        val overKm get() = kmByCat[2] + kmByCat[3] + kmByCat[4] + kmByCat[5]
+    }
 
     /** Podsumowanie wszystkich tras ważone czasem jazdy. */
     fun summary(trips: List<Trip>): Summary {
@@ -142,10 +151,13 @@ object TripRepository {
         val minutes = withStats.sumOf { it.optDouble("durationMin", 0.0) }
         fun weighted(key: String) =
             if (minutes > 0) withStats.sumOf { it.optDouble(key, 0.0) * it.optDouble("durationMin", 0.0) } / minutes else 0.0
+        val cats = DoubleArray(6)
+        withStats.forEach { js -> TripStats.kmByCategory(js).forEachIndexed { i, v -> cats[i] += v } }
         return Summary(
             trips = withStats.size,
             km = km,
-            hours = minutes / 60,
+            seconds = minutes * 60,
+            kmByCat = cats,
             overPct = weighted("overPct_0"),
             over20Pct = weighted("overPct_20"),
             brakesPer100 = if (km > 0) withStats.sumOf { it.optInt("harshBrakes").toDouble() } * 100 / km else 0.0,

@@ -222,15 +222,11 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    /** Duża granatowa karta: co aplikacja teraz robi. */
+    /** Duża granatowa karta: co aplikacja teraz robi, a w trakcie jazdy – podgląd na żywo. */
     @Composable
     private fun StatusCard(recording: Boolean, setupDone: Int) {
+        val live by LiveTrip.state.collectAsState()
         val car = carName()
-        val (title, subtitle) = when {
-            recording -> "Nagrywanie trasy" to "Zatrzyma się samo po rozłączeniu z autem"
-            setupDone < 4 -> "Dokończ konfigurację" to "Gotowe $setupDone z 4 kroków – bez tego nagrywanie nie ruszy samo"
-            else -> "Czekam na auto" to "Nagrywanie ruszy samo po połączeniu z ${car ?: "Bluetooth auta"}"
-        }
         Box(
             Modifier
                 .fillMaxWidth()
@@ -238,58 +234,161 @@ class MainActivity : ComponentActivity() {
                 .background(Brush.verticalGradient(listOf(HeroTop, HeroBottom)))
                 .padding(20.dp)
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        Modifier.size(10.dp).clip(CircleShape).background(
-                            when {
-                                recording -> Color(0xFFFF5252)
-                                setupDone < 4 -> Color(0xFFFFC928)
-                                else -> Color(0xFF5EE0A0)
-                            }
-                        )
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            val l = live
+            if (recording && l != null) LivePanel(l)
+            else {
+                val (title, subtitle) = when {
+                    recording -> "Nagrywanie trasy" to "Czekam na sygnał GPS…"
+                    setupDone < 4 -> "Dokończ konfigurację" to "Gotowe $setupDone z 4 kroków – bez tego nagrywanie nie ruszy samo"
+                    else -> "Czekam na auto" to "Nagrywanie ruszy samo po połączeniu z ${car ?: "Bluetooth auta"}"
                 }
-                Text(subtitle, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    when {
-                        recording -> FilledTonalButton(onClick = { TripControl.stop(this@MainActivity); refresh++ }) {
-                            Text("Zakończ teraz")
-                        }
-                        setupDone < 4 -> Button(
-                            onClick = { page = Page.SETTINGS },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = HeroBottom)
-                        ) { Text("Przejdź do ustawień") }
-                        else -> OutlinedButton(
-                            onClick = { TripControl.start(this@MainActivity); refresh++ },
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
-                        ) {
-                            Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Start ręczny")
-                        }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Dot(if (setupDone < 4) Color(0xFFFFC928) else Color(0xFF5EE0A0), 10.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+                    Text(subtitle, color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(6.dp))
+                    if (setupDone < 4) Button(
+                        onClick = { page = Page.SETTINGS },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = HeroBottom)
+                    ) { Text("Przejdź do ustawień") }
+                    else OutlinedButton(
+                        onClick = { TripControl.start(this@MainActivity); refresh++ },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                    ) {
+                        Icon(Icons.Filled.PlayArrow, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Start ręczny")
                     }
                 }
             }
         }
     }
 
+    /** Podgląd trwającej jazdy: prędkość, znak ograniczenia, czas, dystans w limicie i ponad. */
+    @Composable
+    private fun LivePanel(l: LiveTrip.State) {
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
+        val over = l.limitKmh != null && l.speedKmh > l.limitKmh
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Dot(Color(0xFFFF5252), 10.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Nagrywanie", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (l.gpsOk) "GPS ✓" else "GPS – szukam…",
+                    color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium
+                )
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "%.0f".format(l.speedKmh),
+                        color = if (over) Color(0xFFFF8A80) else Color.White,
+                        style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold
+                    )
+                    Text("km/h – aktualna prędkość", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium)
+                }
+                // znak ograniczenia (gdy znany)
+                Box(
+                    Modifier.size(64.dp).clip(CircleShape).background(Color(0xFFD32F2F)).padding(7.dp)
+                        .clip(CircleShape).background(Color.White),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        l.limitKmh?.toString() ?: "?",
+                        color = Color(0xFF111111), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LiveChip("Czas", formatDuration((now - l.startMs) / 1000.0), Modifier.weight(1.3f))
+                LiveChip("Dystans", "%.1f km".format(Locale("pl"), l.distanceM / 1000), Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LiveChip("W limicie", "%.1f km".format(Locale("pl"), l.okM / 1000), Modifier.weight(1f), SpeedColors[1])
+                LiveChip("Ponad limitem", "%.1f km".format(Locale("pl"), l.overM / 1000), Modifier.weight(1f), SpeedColors[4])
+            }
+            FilledTonalButton(onClick = { TripControl.stop(this@MainActivity); refresh++ }) { Text("Zakończ za minutę") }
+        }
+    }
+
+    @Composable
+    private fun LiveChip(label: String, value: String, modifier: Modifier, accent: Color? = null) {
+        Column(
+            modifier.clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.12f))
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (accent != null) { Dot(accent, 8.dp); Spacer(Modifier.width(5.dp)) }
+                Text(label, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelSmall)
+            }
+            Text(value, color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        }
+    }
+
+    @Composable
+    private fun Dot(color: Color, size: androidx.compose.ui.unit.Dp) {
+        Box(Modifier.size(size).clip(CircleShape).background(color))
+    }
+
+    @OptIn(ExperimentalLayoutApi::class)
     @Composable
     private fun SummaryTiles(s: TripRepository.Summary) {
+        val pl = Locale("pl")
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatTile("Dystans", "%.0f km".format(Locale("pl"), s.km), Modifier.weight(1f))
-                StatTile("Czas jazdy", "%.1f h".format(Locale("pl"), s.hours), Modifier.weight(1f))
+                StatTile("Dystans", "%.1f km".format(pl, s.km), Modifier.weight(1f))
+                StatTile("Czas jazdy", formatDuration(s.seconds), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatTile(
-                    "Ponad limitem", "%.0f%%".format(s.overPct), Modifier.weight(1f),
-                    accent = severityColor(s.overPct), note = "> +20 km/h: %.0f%%".format(s.over20Pct)
-                )
-                StatTile("Ostre hamowania", "%.1f".format(Locale("pl"), s.brakesPer100), Modifier.weight(1f), note = "na 100 km")
+                StatTile("W limicie", "%.1f km".format(pl, s.okKm), Modifier.weight(1f), accent = SpeedColors[1],
+                    note = pctOf(s.okKm, s.km))
+                StatTile("Ponad limitem", "%.1f km".format(pl, s.overKm), Modifier.weight(1f), accent = SpeedColors[4],
+                    note = pctOf(s.overKm, s.km))
+            }
+            DistanceBar(s.kmByCat)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Ponad limitem (czas)", "%.0f%%".format(s.overPct), Modifier.weight(1f),
+                    accent = severityColor(s.overPct), note = "> +20 km/h: %.0f%%".format(s.over20Pct))
+                StatTile("Ostre hamowania", "%.1f".format(pl, s.brakesPer100), Modifier.weight(1f), note = "na 100 km")
+            }
+        }
+    }
+
+    private fun pctOf(part: Double, total: Double) =
+        if (total > 0) "%.0f%% dystansu".format(part * 100 / total) else null
+
+    /** Pasek: jaka część dystansu w której kategorii prędkości. */
+    @OptIn(ExperimentalLayoutApi::class)
+    @Composable
+    private fun DistanceBar(cats: DoubleArray) {
+        val total = cats.sum()
+        if (total <= 0) return
+        val labels = listOf("bez limitu", "w limicie", "+0–10", "+10–20", "+20–30", ">+30")
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Dystans wg prędkości względem limitu", style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.fillMaxWidth().height(12.dp).clip(RoundedCornerShape(6.dp))) {
+                    // kolejność: w limicie, przekroczenia rosnąco, na końcu brak limitu
+                    listOf(1, 2, 3, 4, 5, 0).forEach { i ->
+                        if (cats[i] > 0) Box(Modifier.weight(cats[i].toFloat()).fillMaxHeight().background(SpeedColors[i]))
+                    }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(1, 2, 3, 4, 5, 0).forEach { i ->
+                        if (cats[i] >= 0.05) Row(verticalAlignment = Alignment.CenterVertically) {
+                            Dot(SpeedColors[i], 8.dp)
+                            Spacer(Modifier.width(4.dp))
+                            Text("${labels[i]} %.1f km".format(Locale("pl"), cats[i]), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
             }
         }
     }
@@ -322,7 +421,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun rememberThumb(trip: TripRepository.Trip, r: Int): List<ThumbPoint>? {
         val thumb by produceState<List<ThumbPoint>?>(null, trip.gpx.name, if (trip.recording) r else 0) {
-            value = withContext(Dispatchers.IO) { runCatching { TripRepository.thumbnail(trip.gpx) }.getOrNull() }
+            value = withContext(Dispatchers.IO) { runCatching { TripRepository.thumbnail(this@MainActivity, trip.gpx) }.getOrNull() }
         }
         return thumb
     }
@@ -399,18 +498,24 @@ class MainActivity : ComponentActivity() {
                     )
                 } else {
                     Text(
-                        "%.1f km · %.0f min · max %.0f km/h".format(
-                            Locale("pl"), s.optDouble("distanceKm", 0.0), s.optDouble("durationMin", 0.0), s.optDouble("maxSpeedKmh", 0.0)
+                        "%.1f km · %s · max %.0f km/h".format(
+                            Locale("pl"), s.optDouble("distanceKm", 0.0),
+                            formatDuration(s.optDouble("durationMin", 0.0) * 60), s.optDouble("maxSpeedKmh", 0.0)
                         ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    val over = s.optDouble("overPct_0", 0.0)
+                    val cats = TripStats.kmByCategory(s)
+                    val overKm = cats[2] + cats[3] + cats[4] + cats[5]
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.size(8.dp).clip(CircleShape).background(severityColor(over)))
-                        Spacer(Modifier.width(6.dp))
+                        Dot(SpeedColors[1], 8.dp)
+                        Spacer(Modifier.width(4.dp))
+                        Text("%.1f km".format(Locale("pl"), cats[1]), style = MaterialTheme.typography.labelMedium)
+                        Spacer(Modifier.width(10.dp))
+                        Dot(if (overKm > 0.05) SpeedColors[4] else SpeedColors[1], 8.dp)
+                        Spacer(Modifier.width(4.dp))
                         Text(
-                            "ponad limitem %.0f%% czasu".format(over) +
+                            "ponad limitem %.1f km".format(Locale("pl"), overKm) +
                                 (s.optInt("harshBrakes").takeIf { it > 0 }?.let { " · hamowania: $it" } ?: ""),
                             style = MaterialTheme.typography.labelMedium
                         )

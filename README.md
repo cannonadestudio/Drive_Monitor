@@ -15,6 +15,11 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.6** – naprawa ekranu trasy (błąd rysowania przed nadaniem rozmiaru blokował mapę),
+  podgląd jazdy na żywo (prędkość, znak ograniczenia, czas, km w limicie / ponad),
+  statystyki w kilometrach w limicie i ponad limitem z paskiem kategorii, czas w h/min/s,
+  trasa rysowana po drogach (dopasowanie do OSM) i bez „gwiazdek” z postojów,
+  postoje nie są zapisywane do GPX co sekundę.
 - **0.5** – nowy ekran główny: karta statusu, kafelki statystyk, ostatnia trasa z dużym
   podglądem (dotknięcie otwiera pełną mapę z odtwarzaniem), lista tras z miniaturami;
   uprawnienia i ustawienia w menu ⚙; usuwanie pojedynczej trasy (menu ⋮) i wszystkich tras.

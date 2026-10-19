@@ -35,6 +35,7 @@ class TripRecorderService : Service() {
     private var altitudeConverter: AltitudeConverter? = null
 
     private var gpx: GpxWriter? = null
+    private var lastWritten: TrackPoint? = null
     private var stats = TripStats()
     private val stopRunnable = Runnable { finishTrip() }
 
@@ -75,6 +76,7 @@ class TripRecorderService : Service() {
         gpx = GpxWriter(file)
         currentFile = file
         stats = TripStats()
+        publishLive(null, gpsOk = false)
 
         val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
             .setMinUpdateIntervalMillis(1000L)
@@ -97,7 +99,8 @@ class TripRecorderService : Service() {
     }
 
     private fun onLocation(loc: Location) {
-        if (gpx == null || loc.accuracy > MAX_ACCURACY_M) return
+        if (gpx == null) return
+        if (loc.accuracy > MAX_ACCURACY_M) { publishLive(null, gpsOk = false); return }
         val speedKmh = if (loc.hasSpeed()) loc.speed * 3.6 else 0.0
         val bearing = if (loc.hasBearing() && speedKmh > 5) loc.bearing else null
         val limit = limits.lookup(loc.latitude, loc.longitude, bearing)
@@ -111,9 +114,33 @@ class TripRecorderService : Service() {
             limitKmh = limit?.kmh,
             limitSource = limit?.source,
         )
-        gpx?.add(p)
+        // postój: drgania GPS w miejscu nie trafiają do pliku (inaczej rysują „gwiazdki” na mapie)
+        val last = lastWritten
+        val standing = last != null && speedKmh < 3 &&
+            DisplayTrack.distM(last.lat, last.lon, p.lat, p.lon) < 10 && p.timeMs - last.timeMs < 30_000
+        if (!standing) {
+            gpx?.add(p)
+            lastWritten = p
+        }
         stats.add(p)
         updateNotification(p)
+        publishLive(p, gpsOk = true)
+    }
+
+    private fun publishLive(p: TrackPoint?, gpsOk: Boolean) {
+        val prev = LiveTrip.state.value
+        LiveTrip.update(
+            LiveTrip.State(
+                startMs = if (stats.startMs > 0) stats.startMs else prev?.startMs ?: System.currentTimeMillis(),
+                speedKmh = p?.speedKmh ?: 0.0,
+                limitKmh = p?.limitKmh,
+                distanceM = stats.distanceM,
+                okM = stats.okDistM,
+                overM = stats.overDistM[0],
+                altitudeM = p?.altitude,
+                gpsOk = gpsOk,
+            )
+        )
     }
 
     /**
@@ -144,7 +171,9 @@ class TripRecorderService : Service() {
             Log.i(TAG, "Koniec trasy: %.1f km".format(stats.distanceM / 1000))
         }
         gpx = null
+        lastWritten = null
         currentFile = null
+        LiveTrip.update(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }

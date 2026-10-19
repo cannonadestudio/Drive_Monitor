@@ -10,9 +10,14 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewAssetLoader
@@ -27,33 +32,63 @@ import java.io.File
 class TripMapActivity : ComponentActivity() {
 
     private lateinit var gpx: File
-    private lateinit var tripJson: String
+
+    /**
+     * JSON trasy dla strony mapy. Liczony leniwie – pierwsze żądanie przychodzi z wątku
+     * WebView, więc odczyt GPX i dopasowanie do dróg nie blokują interfejsu.
+     */
+    private val tripJson: String by lazy {
+        runCatching {
+            val statsFile = File(gpx.parentFile, gpx.nameWithoutExtension + ".json")
+            val stats = if (statsFile.exists()) runCatching { JSONObject(statsFile.readText()) }.getOrNull() else null
+            stats?.remove("thumb"); stats?.remove("thumb2")
+            val points = DisplayTrack.prepare(this@TripMapActivity, GpxParser.parse(gpx))
+            GpxParser.toMapJson(gpx.nameWithoutExtension, points, stats)
+        }.getOrElse { """{"points":[],"error":"${it.message?.replace("\"", "'")}"}""" }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         gpx = File(intent.getStringExtra(EXTRA_GPX) ?: return finish())
-        val statsFile = File(gpx.parentFile, gpx.nameWithoutExtension + ".json")
-        val stats = if (statsFile.exists()) JSONObject(statsFile.readText()) else null
-        tripJson = GpxParser.toMapJson(gpx.nameWithoutExtension, GpxParser.parse(gpx), stats)
-
         setContent { DriveTheme { Screen() } }
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Screen() {
+        var menu by remember { mutableStateOf(false) }
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(TripRepository.formatTitle(gpx.nameWithoutExtension), maxLines = 1) },
+                    title = {
+                        Text(
+                            TripRepository.formatTitle(gpx.nameWithoutExtension),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.titleMedium
+                        )
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = { finish() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć")
+                        }
+                    },
                     actions = {
-                        TextButton(onClick = {
-                            val msg = runCatching { "Zapisano: " + GpxExport.saveToDownloads(this@TripMapActivity, gpx) }
-                                .getOrElse { "Błąd zapisu: ${it.message}" }
-                            Toast.makeText(this@TripMapActivity, msg, Toast.LENGTH_LONG).show()
-                        }) { Text("Pobierz GPX") }
-                        TextButton(onClick = { GpxExport.share(this@TripMapActivity, gpx) }) {
-                            Text("Udostępnij")
+                        IconButton(onClick = { GpxExport.share(this@TripMapActivity, gpx) }) {
+                            Icon(Icons.Filled.Share, contentDescription = "Udostępnij GPX")
+                        }
+                        Box {
+                            IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Więcej") }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("Zapisz GPX w Pobranych") },
+                                    onClick = {
+                                        menu = false
+                                        val msg = runCatching { "Zapisano: " + GpxExport.saveToDownloads(this@TripMapActivity, gpx) }
+                                            .getOrElse { "Błąd zapisu: ${it.message}" }
+                                        Toast.makeText(this@TripMapActivity, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                )
+                            }
                         }
                     }
                 )

@@ -131,7 +131,8 @@ loadTrip().then(initUI).catch(e => showError('Nie udało się wczytać trasy: ' 
 function initUI(trip) {
   const P = trip.points || [];   // [lon, lat, ele, speed, limit, t]
   if (P.length < 2) {
-    showError(`Ta trasa ma za mało punktów, by ją pokazać (${P.length}).`);
+    showError(trip.error ? 'Nie udało się odczytać trasy: ' + trip.error
+      : `Ta trasa ma za mało punktów, by ją pokazać (${P.length}).`);
     return;
   }
 
@@ -179,14 +180,25 @@ function initUI(trip) {
 
   // ---------- statystyki ----------
   const fmt = (v, d = 0) => v == null || isNaN(v) ? '–' : Number(v).toLocaleString('pl-PL', { maximumFractionDigits: d, minimumFractionDigits: d });
+  const dur = sec => {
+    sec = Math.max(0, Math.round(sec));
+    const h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60), s2 = sec % 60;
+    return h ? `${h} h ${String(m).padStart(2, '0')} min ${String(s2).padStart(2, '0')} s`
+      : m ? `${m} min ${String(s2).padStart(2, '0')} s` : `${s2} s`;
+  };
   const hhmm = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60); return h ? `${h}:${String(m).padStart(2, '0')} h` : `${m}:${String(s % 60).padStart(2, '0')}`; };
   const S = trip.stats || {};
+  // podział dystansu na kategorie liczony z punktów trasy
+  const catKm = { na: 0, ok: 0, c1: 0, c2: 0, c3: 0, c4: 0 };
+  for (let i = 1; i < P.length; i++) catKm[cat(P[i])] += (D[i] - D[i - 1]) / 1000;
+  const overKm = catKm.c1 + catKm.c2 + catKm.c3 + catKm.c4;
   const statItems = [
     ['Dystans', fmt(totalD / 1000, 1) + ' km'],
-    ['Czas', hhmm(totalT)],
+    ['Czas', dur(totalT)],
     ['Max', fmt(S.maxSpeedKmh ?? Math.max(...P.map(p => p[3]))) + ' km/h'],
-    ['Ponad limit', S.overPct_0 != null ? fmt(S.overPct_0) + '%' : '–'],
-    ['> +20', S.overPct_20 != null ? fmt(S.overPct_20) + '%' : '–'],
+    ['W limicie', `<span style="color:var(--ok)">${fmt(catKm.ok, 1)} km</span>`],
+    ['Ponad limitem', `<span style="color:var(--c3)">${fmt(overKm, 1)} km</span>`],
+    ['Bez limitu', fmt(catKm.na, 1) + ' km'],
     ['Hamowania', S.harshBrakes ?? '–'],
   ];
   if (hasEle) statItems.push(['↑ / ↓', `${fmt(gain)} / ${fmt(loss)} m`], ['Wys.', `${fmt(eMin)}–${fmt(eMax)} m`]);
@@ -210,6 +222,8 @@ function initUI(trip) {
   function layout2D() {
     const dpr = window.devicePixelRatio || 1;
     const w = c2d.clientWidth, h = c2d.clientHeight;
+    // WebView potrafi uruchomić stronę, zanim dostanie rozmiar – wtedy czekamy na ResizeObserver
+    if (w < 10 || h < 10) { proj = null; return; }
     c2d.width = routeLayer.width = w * dpr;
     c2d.height = routeLayer.height = h * dpr;
 
@@ -248,7 +262,7 @@ function initUI(trip) {
   }
 
   function draw2D(s) {
-    if (!proj) return;
+    if (!proj || !routeLayer.width || !routeLayer.height) return;
     const dpr = window.devicePixelRatio || 1;
     g2d.clearRect(0, 0, c2d.width, c2d.height);
     g2d.drawImage(routeLayer, 0, 0);
@@ -451,7 +465,7 @@ function initUI(trip) {
   // ---------- rysowanie klatki ----------
   const startMs = trip.startMs || 0;
   const clockAt = t => startMs
-    ? new Date(startMs + t * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' }) : hhmm(t);
+    ? new Date(startMs + t * 1000).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : hhmm(t);
   let tNow = 0;
 
   function render(t, follow, dtReal = 0) {
@@ -463,7 +477,7 @@ function initUI(trip) {
     hud.classList.toggle('over', s.limit != null && s.speed > s.limit);
     document.getElementById('hudEle').textContent = s.ele != null ? `${Math.round(s.ele)} m n.p.m.` : '';
     document.getElementById('tNow').textContent = clockAt(t);
-    document.getElementById('tDist').textContent = fmt(s.dist / 1000, 1) + ' / ' + fmt(totalD / 1000, 1) + ' km';
+    document.getElementById('tDist').textContent = fmt(s.dist / 1000, 1) + ' / ' + fmt(totalD / 1000, 1) + ' km · ' + dur(t);
     document.getElementById('tEnd').textContent = clockAt(totalT);
 
     if (mapReady) {
@@ -525,6 +539,7 @@ function initUI(trip) {
   function drawProfile(cursorDist) {
     const dpr = window.devicePixelRatio || 1;
     const w = cv.clientWidth, h = cv.clientHeight;
+    if (w < 10 || h < 10) return;
     if (cv.width !== w * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
     const c = ctx2; c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, w, h);
     const css = getComputedStyle(document.documentElement);
@@ -570,13 +585,16 @@ function initUI(trip) {
   }
   cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); scrub(e); });
   cv.addEventListener('pointermove', e => { if (e.buttons) scrub(e); });
-  window.addEventListener('resize', () => { placeOverlays(); layout2D(); render(tNow, false); });
+  function relayout() {
+    try { placeOverlays(); layout2D(); render(tNow, playing); } catch (e) { console.error('relayout', e); }
+  }
+  window.addEventListener('resize', relayout);
+  if (window.ResizeObserver) new ResizeObserver(relayout).observe(document.body);
 
-  // start: od razu widok uproszczony, mapa doczytuje się w tle
-  layout2D();
-  seek(0);
+  // start: mapa doczytuje się w tle, a w tym czasie działa widok uproszczony
   window.__uiReady = true;
   loadLib(0);
+  relayout();
 }
 </script>
 </body>

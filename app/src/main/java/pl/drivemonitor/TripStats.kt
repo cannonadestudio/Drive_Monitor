@@ -14,6 +14,9 @@ class TripStats {
     var maxSpeedKmh = 0.0; private set
 
     var timeWithLimitS = 0.0; private set          // czas, dla którego znaliśmy limit
+    var distWithLimitM = 0.0; private set          // dystans, dla którego znaliśmy limit
+    var okDistM = 0.0; private set                 // dystans w limicie
+    var lastLimitKmh: Int? = null; private set
     val overTimeS = DoubleArray(THRESHOLDS.size)   // czas powyżej progu
     val overDistM = DoubleArray(THRESHOLDS.size)
     var maxOverKmh = 0.0; private set
@@ -43,9 +46,12 @@ class TripStats {
         if (acc <= HARSH_BRAKE) harshBrakes++
         if (acc >= HARSH_ACCEL) harshAccels++
 
+        lastLimitKmh = p.limitKmh
         val limit = p.limitKmh ?: return
         timeWithLimitS += dt
+        distWithLimitM += segM
         val over = p.speedKmh - limit
+        if (over <= 0) okDistM += segM
         maxOverKmh = max(maxOverKmh, over)
         THRESHOLDS.forEachIndexed { i, th ->
             if (over > th) { overTimeS[i] += dt; overDistM[i] += segM }
@@ -56,6 +62,9 @@ class TripStats {
         put("startMs", startMs); put("endMs", endMs)
         put("distanceKm", distanceM / 1000)
         put("durationMin", (endMs - startMs) / 60000.0)
+        put("durationS", (endMs - startMs) / 1000.0)
+        put("withLimitKm", distWithLimitM / 1000)
+        put("okKm", okDistM / 1000)
         put("maxSpeedKmh", maxSpeedKmh)
         put("limitCoveragePct", if (endMs > startMs) timeWithLimitS * 100_000 / (endMs - startMs) else 0.0)
         put("maxOverKmh", maxOverKmh)
@@ -66,7 +75,24 @@ class TripStats {
         }
     }
 
+    /** Podział dystansu (km) na kategorie jak na mapie: brak limitu, w limicie, +0–10, +10–20, +20–30, >+30. */
+    fun kmByCategory(): DoubleArray = kmByCategory(toJson())
+
     companion object {
+        /** Działa też dla starszych plików .json bez pól withLimitKm/okKm (przybliżenie z czasu). */
+        fun kmByCategory(js: JSONObject): DoubleArray {
+            val total = js.optDouble("distanceKm", 0.0)
+            val withLimit = if (js.has("withLimitKm")) js.optDouble("withLimitKm")
+                else total * js.optDouble("limitCoveragePct", 0.0).coerceIn(0.0, 100.0) / 100
+            val o0 = js.optDouble("overKm_0", 0.0); val o10 = js.optDouble("overKm_10", 0.0)
+            val o20 = js.optDouble("overKm_20", 0.0); val o30 = js.optDouble("overKm_30", 0.0)
+            val ok = if (js.has("okKm")) js.optDouble("okKm") else (withLimit - o0).coerceAtLeast(0.0)
+            return doubleArrayOf(
+                (total - withLimit).coerceAtLeast(0.0), ok,
+                (o0 - o10).coerceAtLeast(0.0), (o10 - o20).coerceAtLeast(0.0), (o20 - o30).coerceAtLeast(0.0), o30,
+            )
+        }
+
         val THRESHOLDS = intArrayOf(0, 10, 20, 30)
         const val HARSH_BRAKE = -3.5   // m/s²
         const val HARSH_ACCEL = 3.0

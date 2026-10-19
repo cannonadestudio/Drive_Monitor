@@ -74,6 +74,48 @@ class SpeedLimitProvider(ctx: Context) {
     }
 
     /**
+     * Rzut punktu na najbliższy odcinek drogi (do wyświetlania śladu „po drogach”).
+     * Nie pobiera nic z sieci – używa tylko danych już zapisanych w telefonie.
+     */
+    fun snap(lat: Double, lon: Double, bearing: Float?, maxM: Double): Pair<Double, Double>? {
+        var best: Pair<Double, Double>? = null
+        var bestScore = Double.MAX_VALUE
+        for (db in listOfNotNull(offline, online.db)) {
+            val dLat = maxM / 111_320.0
+            val dLon = maxM / (111_320.0 * cos(Math.toRadians(lat)))
+            db.rawQuery(
+                """SELECT lat1, lon1, lat2, lon2, oneway FROM segments
+                   WHERE maxlat >= ? AND minlat <= ? AND maxlon >= ? AND minlon <= ?""",
+                arrayOf((lat - dLat).toString(), (lat + dLat).toString(), (lon - dLon).toString(), (lon + dLon).toString())
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val lat1 = c.getDouble(0); val lon1 = c.getDouble(1)
+                    val lat2 = c.getDouble(2); val lon2 = c.getDouble(3)
+                    val k = cos(Math.toRadians(lat)) * 111_320.0
+                    val px = (lon - lon1) * k; val py = (lat - lat1) * 111_320.0
+                    val sx = (lon2 - lon1) * k; val sy = (lat2 - lat1) * 111_320.0
+                    val len2 = sx * sx + sy * sy
+                    val t = if (len2 == 0.0) 0.0 else ((px * sx + py * sy) / len2).coerceIn(0.0, 1.0)
+                    val dist = hypot(px - t * sx, py - t * sy)
+                    if (dist > maxM) continue
+                    var score = dist
+                    if (bearing != null) {
+                        val segBearing = bearingDeg(lat1, lon1, lat2, lon2)
+                        var diff = abs(((bearing - segBearing + 540) % 360) - 180)
+                        if (c.getInt(4) == 0) diff = min(diff, 180 - diff)
+                        score += diff * 0.3
+                    }
+                    if (score < bestScore) {
+                        bestScore = score
+                        best = (lat1 + t * (lat2 - lat1)) to (lon1 + t * (lon2 - lon1))
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    /**
      * Domyślne limity w Polsce, gdy OSM nie ma tagu maxspeed.
      * Teren zabudowany (residential / living_street) – 50 km/h, strefa zamieszkania – 20.
      */
