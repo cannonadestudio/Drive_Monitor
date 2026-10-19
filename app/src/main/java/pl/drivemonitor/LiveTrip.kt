@@ -14,6 +14,10 @@ object LiveTrip {
         val overM: Double,        // dystans ponad limitem
         val altitudeM: Double?,
         val gpsOk: Boolean,       // czy jest świeży, dokładny fix
+        val limitIsDefault: Boolean = false,   // limit z typu drogi, nie ze znaku w OSM
+        val maxSpeedKmh: Double = 0.0,
+        val harshBrakes: Int = 0,
+        val noLimitM: Double = 0.0,            // dystans bez znanego limitu
     )
 
     private val _state = MutableStateFlow<State?>(null)

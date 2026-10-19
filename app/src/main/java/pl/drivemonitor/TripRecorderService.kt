@@ -103,7 +103,7 @@ class TripRecorderService : Service() {
         if (loc.accuracy > MAX_ACCURACY_M) { publishLive(null, gpsOk = false); return }
         val speedKmh = if (loc.hasSpeed()) loc.speed * 3.6 else 0.0
         val bearing = if (loc.hasBearing() && speedKmh > 5) loc.bearing else null
-        val limit = limits.lookup(loc.latitude, loc.longitude, bearing)
+        val limit = stableLimit(limits.lookup(loc.latitude, loc.longitude, bearing), speedKmh, loc.time)
 
         val p = TrackPoint(
             timeMs = loc.time,
@@ -127,18 +127,49 @@ class TripRecorderService : Service() {
         publishLive(p, gpsOk = true)
     }
 
+    // ---------- stabilizacja ograniczenia prędkości ----------
+    // Pojedynczy punkt GPS potrafi „trafić” w drogę poprzeczną na skrzyżowaniu albo chwilowo
+    // nie mieć danych. Nowy limit przyjmujemy dopiero po 3 kolejnych zgodnych odczytach,
+    // na postoju go nie zmieniamy, a przy braku danych trzymamy ostatni przez 15 s.
+    private var curLimit: SpeedLimitProvider.Limit? = null
+    private var curLimitSeenMs = 0L
+    private var candLimit: SpeedLimitProvider.Limit? = null
+    private var candCount = 0
+
+    private fun stableLimit(raw: SpeedLimitProvider.Limit?, speedKmh: Double, now: Long): SpeedLimitProvider.Limit? {
+        val cur = curLimit
+        when {
+            raw == null -> {
+                if (cur != null && now - curLimitSeenMs > 15_000) curLimit = null
+            }
+            cur == null || raw.kmh == cur.kmh -> {
+                curLimit = raw; curLimitSeenMs = now; candLimit = null; candCount = 0
+            }
+            speedKmh < 5 -> curLimitSeenMs = now          // postój – nie zmieniamy
+            else -> {
+                if (candLimit?.kmh == raw.kmh) candCount++ else { candLimit = raw; candCount = 1 }
+                if (candCount >= 3) { curLimit = raw; curLimitSeenMs = now; candLimit = null; candCount = 0 }
+            }
+        }
+        return curLimit
+    }
+
     private fun publishLive(p: TrackPoint?, gpsOk: Boolean) {
         val prev = LiveTrip.state.value
         LiveTrip.update(
             LiveTrip.State(
                 startMs = if (stats.startMs > 0) stats.startMs else prev?.startMs ?: System.currentTimeMillis(),
-                speedKmh = p?.speedKmh ?: 0.0,
-                limitKmh = p?.limitKmh,
+                speedKmh = p?.speedKmh ?: prev?.speedKmh ?: 0.0,
+                limitKmh = if (p != null) p.limitKmh else prev?.limitKmh,
                 distanceM = stats.distanceM,
                 okM = stats.okDistM,
                 overM = stats.overDistM[0],
-                altitudeM = p?.altitude,
+                altitudeM = p?.altitude ?: prev?.altitudeM,
                 gpsOk = gpsOk,
+                limitIsDefault = p?.limitSource?.startsWith("default") ?: false,
+                maxSpeedKmh = stats.maxSpeedKmh,
+                harshBrakes = stats.harshBrakes,
+                noLimitM = (stats.distanceM - stats.distWithLimitM).coerceAtLeast(0.0),
             )
         )
     }
@@ -172,6 +203,7 @@ class TripRecorderService : Service() {
         }
         gpx = null
         lastWritten = null
+        curLimit = null; candLimit = null; candCount = 0
         currentFile = null
         LiveTrip.update(null)
         stopForeground(STOP_FOREGROUND_REMOVE)

@@ -15,6 +15,11 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.9** – ekran główny sam wykrywa start i koniec jazdy; karta „Ta jazda” na żywo:
+  prędkość, znak ograniczenia w prawym górnym rogu (ze znaku OSM / wg typu drogi), czas,
+  dystans, km w limicie / ponad / bez limitu, średnia i maks. prędkość; stabilizacja
+  ograniczenia (bez skakania na skrzyżowaniach); po jeździe – podsumowanie ostatniej jazdy;
+  nowy ekran **Statystyki** (7 dni / 30 dni / rok / wszystko, km dziennie/miesięcznie, rekordy).
 - **0.8** – natywna mapa MapLibre Android zamiast mapy w przeglądarce (na części telefonów
   WebGL w WebView rysował czarny ekran): trasa, auto, kamera 3D z pochyleniem i obrotem wokół
   auta, profil, odtwarzanie; podgląd na ekranie głównym jako zdjęcie mapy; mapa offline przez

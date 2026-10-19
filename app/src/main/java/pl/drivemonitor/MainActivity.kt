@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -53,7 +54,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    private enum class Page { HOME, SETTINGS }
+    private enum class Page { HOME, SETTINGS, STATS }
 
     private var page by mutableStateOf(Page.HOME)
     private var refresh by mutableIntStateOf(0)
@@ -131,10 +132,11 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             DriveTheme {
-                BackHandler(enabled = page == Page.SETTINGS) { page = Page.HOME }
+                BackHandler(enabled = page != Page.HOME) { page = Page.HOME }
                 when (page) {
                     Page.HOME -> HomeScreen()
                     Page.SETTINGS -> SettingsScreen()
+                    Page.STATS -> StatsScreen()
                 }
                 if (showCarPicker) CarPickerDialog()
                 tripToDelete?.let { DeleteTripDialog(it) }
@@ -156,14 +158,16 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun HomeScreen() {
         val r = refresh
-        val trips = remember(r) { TripRepository.list(this) }
-        val summary = remember(trips) { TripRepository.summary(trips) }
-        val recording = TripRecorderService.currentFile != null
+        // stan nagrywania obserwowany na żywo – ekran sam zauważa start i koniec jazdy
+        val live by LiveTrip.state.collectAsState()
+        val recording = live != null || TripRecorderService.currentFile != null
+        val trips = remember(r, recording) { TripRepository.list(this) }
         val setupDone = remember(r) { setupDoneCount() }
 
-        // w trakcie nagrywania odświeżamy listę co kilka sekund
+        // w trakcie nagrywania odświeżamy listę (miniatura trwającej trasy) co 15 s
         LaunchedEffect(recording) {
-            while (recording) { delay(5000); refresh++ }
+            refresh++
+            while (recording) { delay(15_000); refresh++ }
         }
 
         Scaffold(
@@ -180,6 +184,9 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     actions = {
+                        IconButton(onClick = { page = Page.STATS }) {
+                            Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Statystyki")
+                        }
                         IconButton(onClick = { page = Page.SETTINGS }) {
                             BadgedBox(badge = { if (setupDone < 4) Badge() }) {
                                 Icon(Icons.Filled.Settings, contentDescription = "Ustawienia")
@@ -195,11 +202,14 @@ class MainActivity : ComponentActivity() {
             ) {
                 item { StatusCard(recording, setupDone) }
 
-                if (summary.trips > 0) item { SummaryTiles(summary) }
-
                 val latest = trips.firstOrNull()
+                // po jeździe: podsumowanie ostatniej trasy (w trakcie jazdy liczby są w karcie na żywo)
+                if (!recording && latest?.stats != null) {
+                    item { SectionTitle("Ostatnia jazda") }
+                    item { LastTripTiles(latest.stats) }
+                }
                 if (latest != null) {
-                    item { SectionTitle(if (latest.recording) "Trwająca trasa" else "Ostatnia trasa") }
+                    item { SectionTitle(if (latest.recording) "Trwająca trasa" else "Mapa ostatniej trasy") }
                     item(key = "latest-" + latest.gpx.name) { LatestTripCard(latest, r) }
                 }
                 if (trips.size > 1) {
@@ -208,6 +218,28 @@ class MainActivity : ComponentActivity() {
                 }
                 if (trips.isEmpty()) item { EmptyState() }
             }
+        }
+    }
+
+    /** Liczby ostatniej zakończonej jazdy. */
+    @Composable
+    private fun LastTripTiles(js: JSONObject) {
+        val pl = Locale("pl")
+        val cats = TripStats.kmByCategory(js)
+        val km = js.optDouble("distanceKm", 0.0)
+        val overKm = cats[2] + cats[3] + cats[4] + cats[5]
+        val seconds = js.optDouble("durationS", js.optDouble("durationMin", 0.0) * 60)
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("Dystans", "%.1f km".format(pl, km), Modifier.weight(1f))
+                StatTile("Czas", formatDuration(seconds), Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatTile("W limicie", "%.1f km".format(pl, cats[1]), Modifier.weight(1f), accent = SpeedColors[1], note = pctOf(cats[1], km))
+                StatTile("Ponad limitem", "%.1f km".format(pl, overKm), Modifier.weight(1f),
+                    accent = if (overKm > 0.05) SpeedColors[4] else SpeedColors[1], note = pctOf(overKm, km))
+            }
+            DistanceBar(cats)
         }
     }
 
@@ -270,51 +302,70 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** Podgląd trwającej jazdy: prędkość, znak ograniczenia, czas, dystans w limicie i ponad. */
+    /** Podgląd trwającej jazdy: prędkość, znak ograniczenia (prawy górny róg), czas i dystans tej jazdy. */
     @Composable
     private fun LivePanel(l: LiveTrip.State) {
         var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
         LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(1000) } }
         val over = l.limitKmh != null && l.speedKmh > l.limitKmh
+        val pl = Locale("pl")
+        val elapsedS = ((now - l.startMs) / 1000.0).coerceAtLeast(0.0)
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Dot(Color(0xFFFF5252), 10.dp)
-                Spacer(Modifier.width(8.dp))
-                Text("Nagrywanie", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    if (l.gpsOk) "GPS ✓" else "GPS – szukam…",
-                    color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Top) {
                 Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Dot(Color(0xFFFF5252), 10.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Ta jazda", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            if (l.gpsOk) "GPS ✓" else "GPS – szukam…",
+                            color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         "%.0f".format(l.speedKmh),
                         color = if (over) Color(0xFFFF8A80) else Color.White,
-                        style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Bold
                     )
                     Text("km/h – aktualna prędkość", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.labelMedium)
                 }
-                // znak ograniczenia (gdy znany)
-                Box(
-                    Modifier.size(64.dp).clip(CircleShape).background(Color(0xFFD32F2F)).padding(7.dp)
-                        .clip(CircleShape).background(Color.White),
-                    contentAlignment = Alignment.Center
-                ) {
+                // znak ograniczenia – prawy górny róg
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Box(
+                        Modifier.size(78.dp).clip(CircleShape).background(Color(0xFFD32F2F)).padding(8.dp)
+                            .clip(CircleShape).background(Color.White),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            l.limitKmh?.toString() ?: "?",
+                            color = Color(0xFF111111), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold
+                        )
+                    }
                     Text(
-                        l.limitKmh?.toString() ?: "?",
-                        color = Color(0xFF111111), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold
+                        when {
+                            l.limitKmh == null -> "brak danych"
+                            l.limitIsDefault -> "wg typu drogi"
+                            else -> "ze znaku (OSM)"
+                        },
+                        color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall
                     )
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LiveChip("Czas", formatDuration((now - l.startMs) / 1000.0), Modifier.weight(1.3f))
-                LiveChip("Dystans", "%.1f km".format(Locale("pl"), l.distanceM / 1000), Modifier.weight(1f))
+                LiveChip("Czas jazdy", formatDuration(elapsedS), Modifier.weight(1.4f))
+                LiveChip("Dystans", "%.2f km".format(pl, l.distanceM / 1000), Modifier.weight(1f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                LiveChip("W limicie", "%.1f km".format(Locale("pl"), l.okM / 1000), Modifier.weight(1f), SpeedColors[1])
-                LiveChip("Ponad limitem", "%.1f km".format(Locale("pl"), l.overM / 1000), Modifier.weight(1f), SpeedColors[4])
+                LiveChip("W limicie", "%.2f km".format(pl, l.okM / 1000), Modifier.weight(1f), SpeedColors[1])
+                LiveChip("Ponad limitem", "%.2f km".format(pl, l.overM / 1000), Modifier.weight(1f), SpeedColors[4])
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val avg = if (elapsedS > 0) l.distanceM / 1000 / (elapsedS / 3600) else 0.0
+                LiveChip("Średnio", "%.0f km/h".format(avg), Modifier.weight(1f))
+                LiveChip("Maks.", "%.0f km/h".format(l.maxSpeedKmh), Modifier.weight(1f))
+                LiveChip("Bez limitu", "%.1f km".format(pl, l.noLimitM / 1000), Modifier.weight(1f), SpeedColors[0])
             }
             FilledTonalButton(onClick = { TripControl.stop(this@MainActivity); refresh++ }) { Text("Zakończ za minutę") }
         }
@@ -568,6 +619,151 @@ class MainActivity : ComponentActivity() {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+
+    // =====================================================================
+    // Statystyki (wszystkie jazdy)
+    // =====================================================================
+
+    private enum class Period(val label: String, val days: Int?) {
+        WEEK("7 dni", 7), MONTH("30 dni", 30), YEAR("Rok", 365), ALL("Wszystko", null)
+    }
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun StatsScreen() {
+        var period by remember { mutableStateOf(Period.MONTH) }
+        val all = remember { TripRepository.list(this).filter { it.stats != null } }
+        val now = System.currentTimeMillis()
+        val trips = remember(period) {
+            val from = period.days?.let { now - it * 86_400_000L }
+            all.filter { from == null || it.stats!!.optLong("startMs", 0) >= from }
+        }
+        val summary = remember(trips) { TripRepository.summary(trips) }
+        val pl = Locale("pl")
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Statystyki") },
+                    navigationIcon = {
+                        IconButton(onClick = { page = Page.HOME }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć") }
+                    }
+                )
+            }
+        ) { pad ->
+            LazyColumn(
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pad.calculateTopPadding(), bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Period.entries.forEach { p ->
+                            FilterChip(selected = p == period, onClick = { period = p }, label = { Text(p.label) })
+                        }
+                    }
+                }
+                if (trips.isEmpty()) {
+                    item { Text("Brak jazd w tym okresie.", Modifier.padding(16.dp)) }
+                    return@LazyColumn
+                }
+                val maxSpeed = trips.maxOf { it.stats!!.optDouble("maxSpeedKmh", 0.0) }
+                val longest = trips.maxOf { it.stats!!.optDouble("distanceKm", 0.0) }
+                val avgSpeed = if (summary.seconds > 0) summary.km / (summary.seconds / 3600) else 0.0
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("Jazdy", summary.trips.toString(), Modifier.weight(1f))
+                            StatTile("Dystans", "%.1f km".format(pl, summary.km), Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("Czas w aucie", formatDuration(summary.seconds), Modifier.weight(1f))
+                            StatTile("Średnia prędkość", "%.0f km/h".format(avgSpeed), Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("W limicie", "%.1f km".format(pl, summary.okKm), Modifier.weight(1f),
+                                accent = SpeedColors[1], note = pctOf(summary.okKm, summary.km))
+                            StatTile("Ponad limitem", "%.1f km".format(pl, summary.overKm), Modifier.weight(1f),
+                                accent = SpeedColors[4], note = pctOf(summary.overKm, summary.km))
+                        }
+                    }
+                }
+                item { DistanceBar(summary.kmByCat) }
+                item { SectionTitle(if (period == Period.WEEK || period == Period.MONTH) "Kilometry dziennie" else "Kilometry miesięcznie") }
+                item { KmChart(trips, period) }
+                item { SectionTitle("Prędkość i bezpieczeństwo") }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("Maks. prędkość", "%.0f km/h".format(maxSpeed), Modifier.weight(1f))
+                            StatTile("Najdłuższa jazda", "%.1f km".format(pl, longest), Modifier.weight(1f))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatTile("Ponad limitem (czas)", "%.0f%%".format(summary.overPct), Modifier.weight(1f),
+                                accent = severityColor(summary.overPct), note = "> +20 km/h: %.0f%%".format(summary.over20Pct))
+                            StatTile("Ostre hamowania", "%.1f".format(pl, summary.brakesPer100), Modifier.weight(1f), note = "na 100 km")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Słupki kilometrów: zielony = w limicie, czerwony = ponad, szary = bez limitu. */
+    @Composable
+    private fun KmChart(trips: List<TripRepository.Trip>, period: Period) {
+        val daily = period == Period.WEEK || period == Period.MONTH
+        val zone = java.time.ZoneId.systemDefault()
+        val today = java.time.LocalDate.now(zone)
+        // klucz kubełka -> [ok, over, none]
+        val buckets = LinkedHashMap<java.time.LocalDate, DoubleArray>()
+        if (daily) {
+            for (i in (period.days!! - 1) downTo 0) buckets[today.minusDays(i.toLong())] = DoubleArray(3)
+        } else {
+            val first = trips.minOf { it.stats!!.optLong("startMs") }
+            var m = java.time.Instant.ofEpochMilli(first).atZone(zone).toLocalDate().withDayOfMonth(1)
+            if (period == Period.YEAR) m = maxOf(m, today.minusMonths(11).withDayOfMonth(1))
+            while (!m.isAfter(today)) { buckets[m] = DoubleArray(3); m = m.plusMonths(1) }
+        }
+        trips.forEach { t ->
+            val js = t.stats!!
+            var d = java.time.Instant.ofEpochMilli(js.optLong("startMs")).atZone(zone).toLocalDate()
+            if (!daily) d = d.withDayOfMonth(1)
+            val b = buckets[d] ?: return@forEach
+            val c = TripStats.kmByCategory(js)
+            b[0] += c[1]; b[1] += c[2] + c[3] + c[4] + c[5]; b[2] += c[0]
+        }
+        val maxKm = buckets.values.maxOfOrNull { it.sum() }?.coerceAtLeast(1.0) ?: 1.0
+        val labelFmt = java.time.format.DateTimeFormatter.ofPattern(if (daily) "d.MM" else "LLL", Locale("pl"))
+        val keys = buckets.keys.toList()
+
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Column(Modifier.padding(14.dp)) {
+                Text("najwięcej: %.1f km".format(Locale("pl"), maxKm), style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                androidx.compose.foundation.Canvas(Modifier.fillMaxWidth().height(140.dp).padding(top = 6.dp)) {
+                    val n = buckets.size
+                    val slot = size.width / n
+                    val bw = (slot * 0.7f).coerceAtLeast(2f)
+                    buckets.values.forEachIndexed { i, v ->
+                        var y = size.height
+                        listOf(0 to SpeedColors[1], 1 to SpeedColors[4], 2 to SpeedColors[0]).forEach { (k, col) ->
+                            val h = (v[k] / maxKm * size.height).toFloat()
+                            if (h > 0) {
+                                drawRect(col, topLeft = androidx.compose.ui.geometry.Offset(i * slot + (slot - bw) / 2, y - h),
+                                    size = androidx.compose.ui.geometry.Size(bw, h))
+                                y -= h
+                            }
+                        }
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf(keys.first(), keys[keys.size / 2], keys.last()).distinct().forEach {
+                        Text(it.format(labelFmt), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
         }
     }
