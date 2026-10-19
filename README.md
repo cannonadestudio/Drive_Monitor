@@ -15,6 +15,9 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **0.7** – biblioteka mapy wbudowana w APK (pobierana przy budowaniu), pamięć mapy w telefonie
+  (styl, kafelki, teren), pobieranie mapy offline (okolica tras / 25 km) z instrukcją
+  w ustawieniach, podgląd ostatniej trasy na prawdziwej mapie na ekranie głównym.
 - **0.6** – naprawa ekranu trasy (błąd rysowania przed nadaniem rozmiaru blokował mapę),
   podgląd jazdy na żywo (prędkość, znak ograniczenia, czas, km w limicie / ponad),
   statystyki w kilometrach w limicie i ponad limitem z paskiem kategorii, czas w h/min/s,
@@ -101,6 +104,12 @@ z AWS Terrain Tiles – wszystko darmowe, bez kluczy API.
 
 Wysokość: na Androidzie 14+ zapisywana jest wysokość n.p.m. (wbudowany model geoidy).
 Na starszych to surowa wysokość GPS nad elipsoidą, w Polsce o ok. 30–40 m większa.
+
+## Mapa offline
+
+Ustawienia → **Mapa offline**: „Pobierz okolicę moich tras” albo „Pobierz 25 km wokół mnie”.
+Pobierana jest mapa do zbliżenia 14, ikony, czcionki z polskimi znakami i teren 3D do zbliżenia 12
+(okolica 25 km to zwykle 50–150 MB). Wszystko, co obejrzysz na mapie, też zostaje w telefonie.
 
 ## Gdzie są dane
 

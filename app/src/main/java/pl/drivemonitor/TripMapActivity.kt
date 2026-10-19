@@ -33,19 +33,8 @@ class TripMapActivity : ComponentActivity() {
 
     private lateinit var gpx: File
 
-    /**
-     * JSON trasy dla strony mapy. Liczony leniwie – pierwsze żądanie przychodzi z wątku
-     * WebView, więc odczyt GPX i dopasowanie do dróg nie blokują interfejsu.
-     */
-    private val tripJson: String by lazy {
-        runCatching {
-            val statsFile = File(gpx.parentFile, gpx.nameWithoutExtension + ".json")
-            val stats = if (statsFile.exists()) runCatching { JSONObject(statsFile.readText()) }.getOrNull() else null
-            stats?.remove("thumb"); stats?.remove("thumb2")
-            val points = DisplayTrack.prepare(this@TripMapActivity, GpxParser.parse(gpx))
-            GpxParser.toMapJson(gpx.nameWithoutExtension, points, stats)
-        }.getOrElse { """{"points":[],"error":"${it.message?.replace("\"", "'")}"}""" }
-    }
+    /** Liczony leniwie na wątku WebView – odczyt GPX i dopasowanie do dróg nie blokują ekranu. */
+    private val tripJson: String by lazy { MapWeb.tripJson(this, gpx) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,39 +90,10 @@ class TripMapActivity : ComponentActivity() {
         }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun createWebView(ctx: android.content.Context): WebView {
-        // Strona serwowana z https://appassets.androidplatform.net – prawdziwy origin,
-        // więc kafelki mapy i terenu ładują się bez problemów z CORS.
-        val loader = WebViewAssetLoader.Builder()
-            .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(ctx))
-            // dane trasy jako zwykły plik JSON pod tym samym adresem co strona
-            .addPathHandler("/data/", WebViewAssetLoader.PathHandler { path ->
-                if (path == "trip.json")
-                    android.webkit.WebResourceResponse("application/json", "utf-8", tripJson.byteInputStream())
-                else null
-            })
-            .build()
-
-        return WebView(ctx).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.allowFileAccess = false
-            addJavascriptInterface(Bridge(), "Android")
-            // błędy strony mapy trafiają do logcat (tag TripMap)
-            webChromeClient = object : android.webkit.WebChromeClient() {
-                override fun onConsoleMessage(m: android.webkit.ConsoleMessage): Boolean {
-                    android.util.Log.i("TripMap", "${m.messageLevel()}: ${m.message()} (${m.lineNumber()})")
-                    return true
-                }
-            }
-            webViewClient = object : WebViewClient() {
-                override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest) =
-                    loader.shouldInterceptRequest(request.url)
-            }
-            loadUrl("https://appassets.androidplatform.net/assets/trip_map.html")
+    private fun createWebView(ctx: android.content.Context): WebView =
+        MapWeb.create(ctx, preview = false) { tripJson }.apply {
+            addJavascriptInterface(Bridge(), "Android")   // zapasowa droga przekazania danych
         }
-    }
 
     inner class Bridge {   // zapasowa droga przekazania danych
         @JavascriptInterface

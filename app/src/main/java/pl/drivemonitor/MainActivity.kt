@@ -41,6 +41,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -429,20 +431,22 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun LatestTripCard(trip: TripRepository.Trip, r: Int) {
-        val thumb = rememberThumb(trip, r)
         Card(
             onClick = { openTrip(trip) },
             shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
         ) {
-            Box {
-                RouteThumb(
-                    thumb,
-                    background = MaterialTheme.colorScheme.surface,
-                    gridColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth().height(210.dp),
-                    lineWidth = 4.dp, padding = 22.dp
-                )
+            Box(Modifier.fillMaxWidth().height(230.dp)) {
+                // trasa na prawdziwej mapie (bez internetu: z mapy offline albo sam kształt trasy)
+                key(trip.gpx.name) {
+                    AndroidView(
+                        factory = { c -> MapWeb.create(c, preview = true) { MapWeb.tripJson(c, trip.gpx) } },
+                        onRelease = { it.destroy() },
+                        modifier = Modifier.matchParentSize()
+                    )
+                }
+                // warstwa nad mapą: dotknięcie otwiera pełny ekran
+                Box(Modifier.matchParentSize().clickable { openTrip(trip) })
                 Surface(
                     Modifier.align(Alignment.BottomEnd).padding(10.dp),
                     shape = RoundedCornerShape(50),
@@ -634,6 +638,9 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                item { SectionTitle("Mapa offline") }
+                item { OfflineMapSection() }
+
                 item { SectionTitle("Nagrywanie ręczne") }
                 item {
                     SettingsGroup {
@@ -668,6 +675,120 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    /** Pobieranie mapy na jazdę bez internetu + instrukcja. */
+    @Composable
+    private fun OfflineMapSection() {
+        val progress by OfflineMapDownloader.progress.collectAsState()
+        val scope = rememberCoroutineScope()
+        var sizeMb by remember { mutableStateOf<Double?>(null) }
+        val running = progress?.running == true
+        LaunchedEffect(running) {
+            sizeMb = withContext(Dispatchers.IO) { MapTileCache.get(this@MainActivity).sizeBytes() / 1_048_576.0 }
+        }
+        var showHelp by remember { mutableStateOf(false) }
+
+        SettingsGroup {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    "Mapa i teren 3D zapisują się w telefonie, gdy je oglądasz. Możesz też pobrać okolicę z góry – " +
+                        "wtedy ekran trasy pokaże mapę także bez internetu.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "W pamięci: " + (sizeMb?.let { "%.0f MB".format(it) } ?: "…"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                progress?.let { p ->
+                    if (p.running && p.total > 0) {
+                        LinearProgressIndicator(
+                            progress = { p.done.toFloat() / p.total },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else if (p.running) {
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                    Text(
+                        p.message + if (p.running && p.total > 0) " – ${p.done} z ${p.total}" else "",
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+
+                if (running) {
+                    OutlinedButton(onClick = { OfflineMapDownloader.cancel() }) { Text("Przerwij pobieranie") }
+                } else {
+                    Button(onClick = {
+                        scope.launch {
+                            val bbox = withContext(Dispatchers.IO) { tripsBbox() }
+                            if (bbox == null) toast("Brak zapisanych tras – użyj „25 km wokół mnie”")
+                            else OfflineMapDownloader.start(this@MainActivity, bbox, "okolica moich tras")
+                        }
+                    }, modifier = Modifier.fillMaxWidth()) { Text("Pobierz okolicę moich tras") }
+                    OutlinedButton(onClick = { downloadAroundMe() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Pobierz 25 km wokół mnie")
+                    }
+                    Row {
+                        TextButton(onClick = { showHelp = !showHelp }) { Text(if (showHelp) "Ukryj instrukcję" else "Instrukcja") }
+                        Spacer(Modifier.weight(1f))
+                        TextButton(onClick = {
+                            scope.launch {
+                                withContext(Dispatchers.IO) { MapTileCache.get(this@MainActivity).clear() }
+                                sizeMb = 0.0
+                                toast("Usunięto mapę offline")
+                            }
+                        }) { Text("Usuń mapę", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+
+                if (showHelp) {
+                    Text(
+                        """
+                        Jak przygotować mapę na jazdę bez internetu:
+                        1. Połącz się z Wi-Fi – okolica 25 km to zwykle 50–150 MB.
+                        2. Wybierz „Pobierz 25 km wokół mnie” (potrzebna lokalizacja) albo „Pobierz okolicę moich tras” – obszar obejmujący wszystkie zapisane trasy.
+                        3. Zostaw ekran otwarty do końca pobierania; postęp widać powyżej. Przerwane pobieranie można wznowić – pobrane fragmenty zostają.
+                        4. Gotowe: ekran trasy i podgląd na ekranie głównym pokażą mapę i teren 3D bez internetu.
+
+                        Co jest pobierane: mapa do poziomu ulic (zbliżenie 14), ikony, polskie napisy i teren 3D (zbliżenie 12). Przy większym zbliżeniu bez internetu mapa jest rozciągana z poziomu 14.
+                        Bardzo duży obszar (np. cała Polska) jest blokowany – pobieraj okolice, po których jeździsz.
+                        Mapa pochodzi z OpenStreetMap (OpenFreeMap), teren z AWS Terrain Tiles.
+                        """.trimIndent(),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+    }
+
+    /** Prostokąt obejmujący wszystkie trasy + 3 km zapasu. */
+    private fun tripsBbox(): DoubleArray? {
+        var s = 90.0; var w = 180.0; var n = -90.0; var e = -180.0
+        var any = false
+        TripRepository.list(this).forEach { t ->
+            runCatching { TripRepository.thumbnail(this, t.gpx) }.getOrNull()?.forEach { p ->
+                any = true
+                s = minOf(s, p.lat); n = maxOf(n, p.lat); w = minOf(w, p.lon); e = maxOf(e, p.lon)
+            }
+        }
+        if (!any) return null
+        val m = 3.0 / 111.32
+        val mLon = m / kotlin.math.cos(Math.toRadians((s + n) / 2))
+        return doubleArrayOf(s - m, w - mLon, n + m, e + mLon)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun downloadAroundMe() {
+        if (!has(Manifest.permission.ACCESS_FINE_LOCATION)) { toast("Najpierw nadaj dostęp do lokalizacji"); return }
+        com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(this)
+            .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_BALANCED_POWER_ACCURACY, null)
+            .addOnSuccessListener { loc ->
+                if (loc == null) toast("Nie znam teraz Twojej pozycji – spróbuj za chwilę")
+                else OfflineMapDownloader.start(this, OfflineMapDownloader.bboxAround(loc.latitude, loc.longitude, 25.0), "25 km wokół Ciebie")
+            }
+            .addOnFailureListener { toast("Nie udało się ustalić pozycji: ${it.message}") }
     }
 
     @Composable

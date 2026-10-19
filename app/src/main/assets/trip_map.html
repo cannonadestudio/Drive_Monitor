@@ -51,6 +51,9 @@
 
   #resetView { position: absolute; left: 10px; display: none; padding: 8px 12px; font-weight: 600; bottom: 210px; }
   .car { width: 18px; height: 18px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(26,115,232,.25), 0 2px 6px rgba(0,0,0,.35); }
+  /* podgląd na ekranie głównym: sama mapa z trasą */
+  .preview #stats, .preview #panel, .preview #hud, .preview #resetView, .preview .maplibregl-ctrl-attrib { display: none !important; }
+  .preview #mapStatus { top: 8px !important; left: 8px; font-size: 11px; padding: 4px 8px; }
   #error { position: absolute; inset: 0; display: none; place-items: center; padding: 24px; text-align: center; background: var(--bg); }
 </style>
 </head>
@@ -95,7 +98,10 @@
 'use strict';
 const COLORS = { na: '#9aa0a6', ok: '#2e9e5b', c1: '#e0b400', c2: '#f08a24', c3: '#e0412b', c4: '#8e1b6d' };
 const SPEEDS = [10, 30, 60, 120, 300];
+const PREVIEW = new URLSearchParams(location.search).has('preview');
+if (PREVIEW) document.documentElement.classList.add('preview');
 const LIBS = [
+  'maplibre/maplibre-gl',   // wbudowana w aplikację (pobierana przy budowaniu APK)
   'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl',
   'https://cdn.jsdelivr.net/npm/maplibre-gl@4.7.1/dist/maplibre-gl',
 ];
@@ -266,6 +272,7 @@ function initUI(trip) {
     const dpr = window.devicePixelRatio || 1;
     g2d.clearRect(0, 0, c2d.width, c2d.height);
     g2d.drawImage(routeLayer, 0, 0);
+    if (PREVIEW) return;
     const [x, y] = proj(s.lon, s.lat);
     g2d.fillStyle = 'rgba(26,115,232,.25)'; g2d.beginPath(); g2d.arc(x, y, 15 * dpr, 0, 7); g2d.fill();
     g2d.fillStyle = '#1a73e8'; g2d.strokeStyle = '#fff'; g2d.lineWidth = 3 * dpr;
@@ -326,7 +333,7 @@ function initUI(trip) {
   function loadLib(i) {
     if (window.maplibregl) return initMap();
     if (i >= LIBS.length) {
-      setStatus('Brak mapy (nie udało się pobrać biblioteki) – widok uproszczony');
+      setStatus(PREVIEW ? 'Bez mapy' : 'Brak mapy (nie udało się wczytać biblioteki) – widok uproszczony');
       return;
     }
     const css = document.createElement('link');
@@ -340,23 +347,27 @@ function initUI(trip) {
   }
 
   function initMap() {
-    setStatus('Ładowanie mapy…');
+    setStatus(PREVIEW ? null : 'Ładowanie mapy…');
     try {
       const b = P.reduce((bb, p) => bb.extend([p[0], p[1]]), new maplibregl.LngLatBounds([P[0][0], P[0][1]], [P[0][0], P[0][1]]));
       map = new maplibregl.Map({
         container: 'map',
         style: 'https://tiles.openfreemap.org/styles/liberty',
         bounds: b,
-        fitBoundsOptions: { padding: { top: 130, bottom: 210, left: 40, right: 40 } },
+        fitBoundsOptions: { padding: PREVIEW ? 28 : { top: 130, bottom: 210, left: 40, right: 40 } },
         maxPitch: 80,
-        attributionControl: { compact: true },
+        interactive: !PREVIEW,
+        attributionControl: PREVIEW ? false : { compact: true },
+        fadeDuration: PREVIEW ? 0 : 300,
       });
     } catch (e) {
       console.error('Mapa:', e);
       setStatus('Mapa niedostępna na tym telefonie (' + e.message + ') – widok uproszczony');
       return;
     }
-    const slow = setTimeout(() => { if (!mapReady) setStatus('Mapa wczytuje się długo – sprawdź internet. Widok uproszczony działa.'); }, 15000);
+    const slow = setTimeout(() => {
+      if (!mapReady) setStatus(PREVIEW ? 'Bez mapy' : 'Mapa wczytuje się długo – brak internetu i brak tej okolicy w mapie offline. Widok uproszczony działa.');
+    }, 15000);
     map.on('error', e => console.warn('Mapa:', e && e.error && e.error.message));
     map.on('load', () => {
       clearTimeout(slow);
@@ -372,7 +383,7 @@ function initUI(trip) {
         } });
 
       // teren 3D – gdy się nie uda, zostaje zwykła mapa
-      try {
+      if (!PREVIEW) try {
         const DEM = {
           type: 'raster-dem',
           tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
@@ -388,13 +399,13 @@ function initUI(trip) {
       } catch (e) { console.warn('Teren 3D niedostępny:', e.message); }
 
       const carEl = document.createElement('div'); carEl.className = 'car';
-      marker = new maplibregl.Marker({ element: carEl }).setLngLat([P[0][0], P[0][1]]).addTo(map);
-      attachOrbitGestures();
+      marker = new maplibregl.Marker({ element: carEl }).setLngLat([P[0][0], P[0][1]]);
+      if (!PREVIEW) { marker.addTo(map); attachOrbitGestures(); }
       mapReady = true;
       c2d.style.display = 'none';
       setStatus(null);
       if (!modeBtn.disabled) set3D(true, false);
-      render(tNow, playing);
+      if (!PREVIEW) render(tNow, playing);
     });
   }
 

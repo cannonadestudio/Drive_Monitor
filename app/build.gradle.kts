@@ -23,8 +23,8 @@ android {
         applicationId = "pl.drivemonitor"
         minSdk = 33          // Android 13 – obecność klasycznego Bluetooth w CompanionDeviceManager
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6"
+        versionCode = 7
+        versionName = "0.7"
     }
 
     buildTypes {
@@ -50,3 +50,30 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.webkit:webkit:1.12.1")
 }
+
+// Biblioteka mapy (MapLibre GL JS) wbudowana w APK – ekran mapy nie musi jej pobierać w telefonie.
+// Pobierana raz przy budowaniu; gdy się nie uda, strona i tak spróbuje CDN.
+val mapLibreVersion = "4.7.1"
+val fetchMapLibre by tasks.registering {
+    val outDir = layout.projectDirectory.dir("src/main/assets/maplibre").asFile
+    doLast {
+        outDir.mkdirs()
+        for (name in listOf("maplibre-gl.js", "maplibre-gl.css")) {
+            val target = File(outDir, name)
+            if (target.length() > 1000) continue
+            val sources = listOf(
+                "https://unpkg.com/maplibre-gl@$mapLibreVersion/dist/$name",
+                "https://cdn.jsdelivr.net/npm/maplibre-gl@$mapLibreVersion/dist/$name",
+            )
+            for (url in sources) {
+                try {
+                    java.net.URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+                    if (target.length() > 1000) { logger.lifecycle("MapLibre: pobrano $name z $url"); break }
+                } catch (e: Exception) {
+                    logger.warn("MapLibre: nie udało się pobrać $url: ${e.message}")
+                }
+            }
+        }
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(fetchMapLibre) }
