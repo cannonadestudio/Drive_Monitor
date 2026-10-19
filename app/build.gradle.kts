@@ -1,3 +1,6 @@
+import java.io.InputStream
+import java.net.URI
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -67,7 +70,7 @@ val fetchMapLibre by tasks.registering {
             )
             for (url in sources) {
                 try {
-                    java.net.URI(url).toURL().openStream().use { input -> target.outputStream().use { input.copyTo(it) } }
+                    URI(url).toURL().openStream().use { input: InputStream -> target.outputStream().use { out -> input.copyTo(out) } }
                     if (target.length() > 1000) { logger.lifecycle("MapLibre: pobrano $name z $url"); break }
                 } catch (e: Exception) {
                     logger.warn("MapLibre: nie udało się pobrać $url: ${e.message}")
