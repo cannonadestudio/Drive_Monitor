@@ -15,6 +15,7 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **1.2** – „Popraw ▾” otwiera duże znaki ograniczeń (20–140 km/h, w tym 100 i 140) w siatce 3×3.
 - **1.1** – „Popraw ▾”: poprawka zmienia znak natychmiast (także na postoju); notatki do OSM
   w kolejce z prawdziwym wynikiem wysyłki (nr notatki albo powód odrzucenia), ponawianie
   bez zasięgu; Ustawienia → Moje zgłoszenia (status, link do notatki, ponów, usuń poprawkę).

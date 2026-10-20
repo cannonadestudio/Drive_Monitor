@@ -187,5 +187,5 @@ object LimitReports {
         }
     }
 
-    val COMMON_LIMITS = listOf(20, 30, 40, 50, 70, 90, 120)
+    val COMMON_LIMITS = listOf(20, 30, 40, 50, 70, 90, 100, 120, 140)
 }

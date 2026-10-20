@@ -386,30 +386,64 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun LimitFixButton(l: LiveTrip.State) {
         var open by remember { mutableStateOf(false) }
-        Box {
-            OutlinedButton(
-                onClick = { open = true },
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
-                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                modifier = Modifier.padding(top = 4.dp).height(32.dp)
-            ) { Text("Popraw ▾", style = MaterialTheme.typography.labelMedium) }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                Text(
-                    "Prawidłowy limit tutaj:", Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                LimitReports.COMMON_LIMITS.forEach { v ->
-                    DropdownMenuItem(
-                        text = { Text("$v km/h", fontWeight = if (v == l.limitKmh) FontWeight.Bold else FontWeight.Normal) },
-                        onClick = {
-                            open = false
-                            val msg = LimitReports.submit(
-                                this@MainActivity, l.lat, l.lon, l.wayId, l.limitKmh, v, Prefs.sendOsmNotes(this@MainActivity)
-                            )
-                            toast(msg)
+        OutlinedButton(
+            onClick = { open = true },
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 2.dp),
+            modifier = Modifier.padding(top = 4.dp).height(36.dp)
+        ) { Text("Popraw ▾", style = MaterialTheme.typography.labelLarge) }
+
+        if (open) {
+            // duże znaki – łatwe do trafienia jednym dotknięciem
+            androidx.compose.ui.window.Dialog(onDismissRequest = { open = false }) {
+                Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Prawidłowy limit tutaj", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(12.dp))
+                        LimitReports.COMMON_LIMITS.chunked(3).forEach { row ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(vertical = 6.dp)) {
+                                row.forEach { v ->
+                                    SpeedSign(v, selected = v == l.limitKmh) {
+                                        open = false
+                                        val msg = LimitReports.submit(
+                                            this@MainActivity, l.lat, l.lon, l.wayId, l.limitKmh, v, Prefs.sendOsmNotes(this@MainActivity)
+                                        )
+                                        toast(msg)
+                                    }
+                                }
+                            }
                         }
-                    )
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = { open = false }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                            Text("Anuluj", style = MaterialTheme.typography.titleMedium)
+                        }
+                    }
                 }
+            }
+        }
+    }
+
+    /** Okrągły znak ograniczenia prędkości (czerwony pierścień, czarna liczba). */
+    @Composable
+    private fun SpeedSign(kmh: Int, selected: Boolean, onClick: () -> Unit) {
+        Box(
+            Modifier
+                .size(84.dp)
+                .clip(CircleShape)
+                .background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else Color.Transparent)
+                .clickable(onClick = onClick)
+                .padding(4.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier.fillMaxSize().clip(CircleShape).background(Color(0xFFD32F2F)).padding(9.dp)
+                    .clip(CircleShape).background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    kmh.toString(), color = Color(0xFF111111), fontWeight = FontWeight.Black,
+                    style = if (kmh >= 100) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineMedium
+                )
             }
         }
     }
