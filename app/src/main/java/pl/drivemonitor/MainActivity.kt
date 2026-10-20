@@ -18,6 +18,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.text.drawText
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -878,6 +880,15 @@ class MainActivity : ComponentActivity() {
             prev[0] = t; prev[1] = l.speedKmh
         }
 
+        // przyspieszenie z czujników do pomiaru (gdy g-metr jest skalibrowany)
+        LaunchedEffect(g) { if (g.calibrated) Performance.setSensorG(g.gLong) }
+
+        val m = perf.measure
+        if (m != null) {
+            MeasureScreen(m, g, recording)
+            return
+        }
+
         Scaffold(
             topBar = {
                 TopAppBar(
@@ -917,8 +928,15 @@ class MainActivity : ComponentActivity() {
 
                 // ---- przyspieszenia ----
                 item { SectionTitle("Przyspieszenie") }
-                item { PerfRow("0–100 km/h", perf.status0100, perf.running0100, bestOf(perf.runs, "0–100")) }
-                item { PerfRow("100–150 km/h", perf.status100150, perf.running100150, bestOf(perf.runs, "100–150")) }
+                item {
+                    Text(
+                        "Naciśnij START, zanim ruszysz. Aplikacja poprowadzi Cię krok po kroku, pokaże prędkość, " +
+                            "przyspieszenie i wykres na żywo, a na mecie – raport.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                item { StartCard("0–100 km/h", "start z miejsca", bestOf(perf.runs, "0–100")) { armMeasure(0, 100, recording) } }
+                item { StartCard("100–150 km/h", "rozpędzanie w ruchu", bestOf(perf.runs, "100–150")) { armMeasure(100, 150, recording) } }
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { Performance.resetSession() }) { Text("Reset sesji") }
@@ -981,8 +999,14 @@ class MainActivity : ComponentActivity() {
                     item { SectionTitle("Ostatnie wyniki") }
                     items(perf.runs.take(30)) { r ->
                         val fmt = java.text.SimpleDateFormat("d.MM HH:mm", pl)
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(r.type + (r.note?.let { " · $it" } ?: ""), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        Row(
+                            Modifier.fillMaxWidth()
+                                .then(if (r.report != null) Modifier.clickable { Performance.showReport(r) } else Modifier)
+                                .padding(horizontal = 4.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(r.type + (r.note?.let { " · $it" } ?: "") + (if (r.report != null) "  ›" else ""),
+                                style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                             Text(
                                 (if (r.type.startsWith("Odcinek")) formatDuration(r.seconds) else "%.2f s".format(r.seconds)) +
                                     "  " + fmt.format(java.util.Date(r.timeMs)),
@@ -997,19 +1021,237 @@ class MainActivity : ComponentActivity() {
 
     private fun bestOf(runs: List<Performance.Run>, type: String) = runs.filter { it.type == type }.minByOrNull { it.seconds }
 
+    private fun armMeasure(from: Int, to: Int, recording: Boolean) {
+        if (!recording) TripControl.start(this)
+        Performance.arm(from, to)
+    }
+
     @Composable
-    private fun PerfRow(title: String, status: String, running: Double?, best: Performance.Run?) {
+    private fun StartCard(title: String, sub: String, best: Performance.Run?, onStart: () -> Unit) {
         Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
             Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Najlepszy: " + (best?.let { "%.2f s".format(it.seconds) } ?: "–"), style = MaterialTheme.typography.labelMedium)
+                    Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text(sub, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Najlepszy: " + (best?.let { "%.2f s".format(it.seconds) } ?: "–"), style = MaterialTheme.typography.labelLarge)
                 }
+                Button(onClick = onStart, shape = CircleShape, modifier = Modifier.size(84.dp), contentPadding = PaddingValues(0.dp)) {
+                    Text("START", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    /** Pełny ekran pomiaru: instrukcja → stoper, prędkość, g, wykres na żywo → raport. */
+    @Composable
+    private fun MeasureScreen(m: Performance.Measure, g: GForce.G, recording: Boolean) {
+        BackHandler { Performance.closeMeasure() }
+        val view = androidx.compose.ui.platform.LocalView.current
+        DisposableEffect(Unit) { view.keepScreenOn = true; onDispose { view.keepScreenOn = false } }
+
+        // sygnał dźwiękowy: start stopera i meta (nie trzeba patrzeć na telefon)
+        var lastPhase by remember { mutableStateOf(m.phase) }
+        LaunchedEffect(m.phase) {
+            if (m.phase != lastPhase && m.phase in listOf(Performance.Phase.READY, Performance.Phase.RUNNING, Performance.Phase.DONE, Performance.Phase.ABORTED)) {
+                runCatching {
+                    val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 90)
+                    tg.startTone(
+                        when (m.phase) {
+                            Performance.Phase.DONE -> android.media.ToneGenerator.TONE_PROP_ACK
+                            Performance.Phase.ABORTED -> android.media.ToneGenerator.TONE_PROP_NACK
+                            else -> android.media.ToneGenerator.TONE_PROP_BEEP
+                        }, 300
+                    )
+                    delay(600); tg.release()
+                }
+            }
+            lastPhase = m.phase
+        }
+
+        // płynny stoper między odczytami GPS
+        var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+        LaunchedEffect(m.phase) {
+            while (m.phase == Performance.Phase.RUNNING) { now = System.currentTimeMillis(); delay(50) }
+        }
+        val elapsed = if (m.phase == Performance.Phase.RUNNING)
+            m.elapsed + ((now - m.updatedAtMs).coerceIn(0, 1500)) / 1000.0 else m.elapsed
+        val gNow = if (g.calibrated) g.gLong else m.g
+
+        val (accent, banner) = when (m.phase) {
+            Performance.Phase.WAIT_STOP -> Color(0xFFFFA000) to (if (m.from == 0) "ZATRZYMAJ AUTO" else "ZWOLNIJ")
+            Performance.Phase.READY -> Color(0xFF2E7D32) to (if (m.from == 0) "GOTOWY – RUSZAJ!" else "GOTOWY – PRZYSPIESZ!")
+            Performance.Phase.RUNNING -> Color(0xFF1565C0) to "MIERZĘ…"
+            Performance.Phase.DONE -> Color(0xFF2E7D32) to "RAPORT"
+            Performance.Phase.ABORTED -> Color(0xFFC62828) to "PRZERWANO"
+        }
+
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                Modifier.fillMaxSize().systemBarsPadding().verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { Performance.closeMeasure() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Zamknij") }
+                    Text("${m.type} km/h", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                Surface(shape = RoundedCornerShape(16.dp), color = accent, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(banner, color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                        if (m.phase != Performance.Phase.DONE)
+                            Text(m.message, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                if (!recording && m.phase != Performance.Phase.DONE)
+                    Text("Czekam na GPS (nagrywanie się uruchamia)…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                if (m.phase == Performance.Phase.DONE && m.result != null) {
+                    MeasureReport(m, m.result)
+                } else {
+                    // stoper
+                    Text(
+                        "%.2f s".format(elapsed), Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        color = if (m.phase == Performance.Phase.RUNNING) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    // prędkość + postęp do celu
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text("%.0f".format(m.speed), style = MaterialTheme.typography.displayMedium, fontWeight = FontWeight.Bold)
+                        Text(" km/h", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 10.dp))
+                        Spacer(Modifier.weight(1f))
+                        Text("cel ${m.to} km/h", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 10.dp))
+                    }
+                    LinearProgressIndicator(
+                        progress = { ((m.speed - m.from) / (m.to - m.from)).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(14.dp).clip(RoundedCornerShape(7.dp)),
+                        color = accent,
+                    )
+                    // przyspieszenie
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Przyspieszenie", style = MaterialTheme.typography.labelLarge)
+                            Text(if (g.calibrated) "z czujników telefonu" else "z prędkości GPS (skalibruj g-metr dla dokładności)",
+                                style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Text("%.2f g".format(gNow), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                    }
+                    LinearProgressIndicator(
+                        progress = { (gNow / 1.0).toFloat().coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                        color = Color(0xFFEF6C00),
+                    )
+                    SpeedChart(m.samples, m.from, m.to, maxOf(elapsed, 5.0), Modifier.fillMaxWidth().height(200.dp))
+
+                    if (m.phase == Performance.Phase.ABORTED) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Button(onClick = { Performance.arm(m.from, m.to) }, modifier = Modifier.weight(1f)) { Text("Spróbuj ponownie") }
+                            OutlinedButton(onClick = { Performance.closeMeasure() }, modifier = Modifier.weight(1f)) { Text("Zamknij") }
+                        }
+                    } else {
+                        OutlinedButton(onClick = { Performance.closeMeasure() }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                            Text("PRZERWIJ", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun MeasureReport(m: Performance.Measure, run: Performance.Run) {
+        val rep = run.report
+        val pl = Locale("pl")
+        Text("%.2f s".format(run.seconds), Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = MaterialTheme.colorScheme.primary)
+        Text(java.text.SimpleDateFormat("d MMMM yyyy, HH:mm", pl).format(java.util.Date(run.timeMs)), Modifier.fillMaxWidth(),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        rep?.prevBest?.let { pb ->
+            val d = run.seconds - pb
+            Surface(shape = RoundedCornerShape(12.dp), color = if (d < 0) Color(0x332E7D32) else MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.fillMaxWidth()) {
                 Text(
-                    running?.let { "%.1f s".format(it) } ?: "",
-                    style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary
+                    if (d < 0) "🏆 Nowy rekord! Lepiej o %.2f s (poprzednio %.2f s)".format(-d, pb)
+                    else "Do rekordu zabrakło %.2f s (rekord %.2f s)".format(d, pb),
+                    Modifier.padding(12.dp), fontWeight = FontWeight.SemiBold
                 )
+            }
+        } ?: if (rep != null) Text("Pierwszy wynik w tej kategorii – to Twój rekord.", fontWeight = FontWeight.SemiBold) else Unit
+        if (rep == null) return
+
+        SpeedChart(rep.samples, m.from, m.to, run.seconds, Modifier.fillMaxWidth().height(220.dp))
+
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Międzyczasy", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                rep.splits.forEach { (v, t) -> ReportLine("${m.from}–$v km/h", "%.2f s".format(t)) }
+                ReportLine("${m.from}–${m.to} km/h", "%.2f s".format(run.seconds), bold = true)
+                HorizontalDivider()
+                Text("Szczegóły", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                ReportLine("Dystans rozpędzania", "%.0f m".format(rep.distanceM))
+                ReportLine("Średnie przyspieszenie", "%.2f g (%.1f m/s²)".format(rep.avgG, rep.avgG * 9.81))
+                ReportLine("Maks. przyspieszenie", "%.2f g".format(rep.maxG))
+                Text(if (rep.gFromSensor) "Przyspieszenie z czujników telefonu." else "Przyspieszenie z prędkości GPS (orientacyjne).",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Button(onClick = { Performance.arm(m.from, m.to) }, modifier = Modifier.weight(1f)) { Text("Jeszcze raz") }
+            OutlinedButton(onClick = { Performance.closeMeasure() }, modifier = Modifier.weight(1f)) { Text("Zamknij") }
+        }
+    }
+
+    @Composable
+    private fun ReportLine(label: String, value: String, bold: Boolean = false) {
+        Row(Modifier.fillMaxWidth()) {
+            Text(label, Modifier.weight(1f), fontWeight = if (bold) FontWeight.Bold else FontWeight.Normal)
+            Text(value, fontWeight = FontWeight.Bold)
+        }
+    }
+
+    /** Wykres: prędkość (niebieska, lewa oś) i przyspieszenie g (pomarańczowe, 0–1 g) w funkcji czasu. */
+    @Composable
+    private fun SpeedChart(samples: List<Performance.Sample>, from: Int, to: Int, tMax: Double, modifier: Modifier) {
+        val grid = MaterialTheme.colorScheme.outlineVariant
+        val labelColor = MaterialTheme.colorScheme.onSurfaceVariant
+        val speedColor = Color(0xFF1E88E5)
+        val gColor = Color(0xFFEF6C00)
+        val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+        val style = MaterialTheme.typography.labelSmall.copy(color = labelColor)
+        Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier) {
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 12.dp, bottom = 22.dp)) {
+                val w = size.width; val h = size.height
+                val tSpan = if (tMax > 0) tMax else 1.0
+                fun x(t: Double) = (t / tSpan * w).toFloat()
+                fun yv(v: Double) = (h - (v - from) / (to - from) * h).toFloat().coerceIn(0f, h)
+                fun yg(gv: Double) = (h - gv.coerceIn(0.0, 1.0) * h).toFloat()
+                val step = if (to - from <= 50) 10 else 20
+                var v = from
+                while (v <= to) {
+                    drawLine(grid, androidx.compose.ui.geometry.Offset(0f, yv(v.toDouble())), androidx.compose.ui.geometry.Offset(w, yv(v.toDouble())), 1f)
+                    drawText(measurer, "$v", androidx.compose.ui.geometry.Offset(-30.dp.toPx(), yv(v.toDouble()) - 8.dp.toPx()), style)
+                    v += step
+                }
+                val tStep = if (tSpan <= 12) 2 else 5
+                var tt = 0
+                while (tt <= tSpan) {
+                    drawText(measurer, "${tt}s", androidx.compose.ui.geometry.Offset(x(tt.toDouble()) - 6.dp.toPx(), h + 4.dp.toPx()), style)
+                    tt += tStep
+                }
+                if (samples.size >= 2) {
+                    val gp = androidx.compose.ui.graphics.Path()
+                    samples.forEachIndexed { i, s -> if (i == 0) gp.moveTo(x(s.t), yg(s.g)) else gp.lineTo(x(s.t), yg(s.g)) }
+                    drawPath(gp, gColor, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+                    val sp = androidx.compose.ui.graphics.Path()
+                    samples.forEachIndexed { i, s -> if (i == 0) sp.moveTo(x(s.t), yv(s.v)) else sp.lineTo(x(s.t), yv(s.v)) }
+                    drawPath(sp, speedColor, style = androidx.compose.ui.graphics.drawscope.Stroke(4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round))
+                    val last = samples.last()
+                    drawCircle(speedColor, 6.dp.toPx(), androidx.compose.ui.geometry.Offset(x(last.t), yv(last.v)))
+                }
+                drawText(measurer, "— km/h", androidx.compose.ui.geometry.Offset(w - 110.dp.toPx(), 0f), style.copy(color = speedColor))
+                drawText(measurer, "— g", androidx.compose.ui.geometry.Offset(w - 46.dp.toPx(), 0f), style.copy(color = gColor))
             }
         }
     }

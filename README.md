@@ -15,6 +15,9 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **1.3** – nowy pomiar 0–100 i 100–150 krok po kroku: START → „Zatrzymaj auto” → „Gotowy – ruszaj!” →
+  stoper, prędkość, pasek postępu, przyspieszenie w g i wykres na żywo (sygnał dźwiękowy na starcie i mecie),
+  potem raport: wynik, porównanie z rekordem, międzyczasy, dystans, średnie i maks. g. Raporty dostępne z historii.
 - **1.2** – „Popraw ▾” otwiera duże znaki ograniczeń (20–140 km/h, w tym 100 i 140) w siatce 3×3.
 - **1.1** – „Popraw ▾”: poprawka zmienia znak natychmiast (także na postoju); notatki do OSM
   w kolejce z prawdziwym wynikiem wysyłki (nr notatki albo powód odrzucenia), ponawianie
