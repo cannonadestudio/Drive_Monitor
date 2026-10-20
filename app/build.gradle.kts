@@ -23,8 +23,8 @@ android {
         applicationId = "pl.drivemonitor"
         minSdk = 33          // Android 13 – obecność klasycznego Bluetooth w CompanionDeviceManager
         targetSdk = 35
-        versionCode = 9
-        versionName = "0.9"
+        versionCode = 11
+        versionName = "1.1"
     }
 
     buildTypes {
@@ -50,6 +50,4 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     // natywna mapa: OpenStreetMap (OpenFreeMap), mapy offline, podglądy
     implementation("org.maplibre.gl:android-sdk:11.8.0")
-    // tylko po to, by stare pliki MapWeb.kt / MapTileCache.kt (jeśli zostały w repo) nadal się kompilowały
-    implementation("androidx.webkit:webkit:1.12.1")
 }

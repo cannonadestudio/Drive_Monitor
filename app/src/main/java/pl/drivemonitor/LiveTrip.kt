@@ -18,12 +18,29 @@ object LiveTrip {
         val maxSpeedKmh: Double = 0.0,
         val harshBrakes: Int = 0,
         val noLimitM: Double = 0.0,            // dystans bez znanego limitu
+        val lat: Double = 0.0,
+        val lon: Double = 0.0,
+        val wayId: Long? = null,               // droga OSM, na której jesteśmy (do zgłaszania limitu)
+        val limitIsUser: Boolean = false,      // limit z Twojej poprawki
+        val fixTimeMs: Long = 0L,
     )
 
     private val _state = MutableStateFlow<State?>(null)
     val state: StateFlow<State?> = _state
 
     internal fun update(s: State?) { _state.value = s }
+
+    /** Ślad trwającej jazdy (co ≥ 8 m) – do żywej mapy na ekranie głównym. */
+    private val _track = MutableStateFlow<List<ThumbPoint>>(emptyList())
+    val track: StateFlow<List<ThumbPoint>> = _track
+
+    internal fun resetTrack() { _track.value = emptyList() }
+
+    internal fun appendTrack(lat: Double, lon: Double, cat: Int) {
+        val last = _track.value.lastOrNull()
+        if (last != null && DisplayTrack.distM(last.lat, last.lon, lat, lon) < 8 && last.cat == cat) return
+        _track.value = _track.value + ThumbPoint(lon, lat, cat)
+    }
 }
 
 /** Czas jako „1 h 05 min 12 s”, „18 min 05 s” albo „42 s”. */

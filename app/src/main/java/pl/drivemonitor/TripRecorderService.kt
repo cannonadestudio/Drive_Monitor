@@ -45,6 +45,7 @@ class TripRecorderService : Service() {
         handler = Handler(worker.looper)
         fused = LocationServices.getFusedLocationProviderClient(this)
         limits = SpeedLimitProvider(this)
+        Performance.init(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             altitudeConverter = AltitudeConverter()
         }
@@ -75,11 +76,13 @@ class TripRecorderService : Service() {
         val file = File(dir, "$name.gpx")
         gpx = GpxWriter(file)
         currentFile = file
+        LiveTrip.resetTrack()
         stats = TripStats()
         publishLive(null, gpsOk = false)
 
-        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 1000L)
-            .setMinUpdateIntervalMillis(1000L)
+        // jak najczęstsze odczyty (zwykle 1 Hz, na części telefonów więcej) – dla dokładności pomiarów 0–100
+        val req = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 500L)
+            .setMinUpdateIntervalMillis(200L)
             .setWaitForAccurateLocation(false)
             .build()
         try {
@@ -125,6 +128,8 @@ class TripRecorderService : Service() {
         stats.add(p)
         updateNotification(p)
         publishLive(p, gpsOk = true)
+        LiveTrip.appendTrack(p.lat, p.lon, TripRepository.category(p.speedKmh, p.limitKmh))
+        Performance.onFix(p.timeMs, p.speedKmh, p.lat, p.lon)
     }
 
     // ---------- stabilizacja ograniczenia prędkości ----------
@@ -142,7 +147,8 @@ class TripRecorderService : Service() {
             raw == null -> {
                 if (cur != null && now - curLimitSeenMs > 15_000) curLimit = null
             }
-            cur == null || raw.kmh == cur.kmh -> {
+            // Twoja poprawka z przycisku „Popraw” – od razu, bez czekania na potwierdzenie
+            cur == null || raw.kmh == cur.kmh || (raw.source == "user" && raw.wayId == cur.wayId) -> {
                 curLimit = raw; curLimitSeenMs = now; candLimit = null; candCount = 0
             }
             speedKmh < 5 -> curLimitSeenMs = now          // postój – nie zmieniamy
@@ -170,6 +176,11 @@ class TripRecorderService : Service() {
                 maxSpeedKmh = stats.maxSpeedKmh,
                 harshBrakes = stats.harshBrakes,
                 noLimitM = (stats.distanceM - stats.distWithLimitM).coerceAtLeast(0.0),
+                lat = p?.lat ?: prev?.lat ?: 0.0,
+                lon = p?.lon ?: prev?.lon ?: 0.0,
+                wayId = if (p != null) curLimit?.wayId else prev?.wayId,
+                limitIsUser = p?.limitSource == "user",
+                fixTimeMs = p?.timeMs ?: prev?.fixTimeMs ?: 0L,
             )
         )
     }

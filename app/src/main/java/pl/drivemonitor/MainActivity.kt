@@ -54,7 +54,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    private enum class Page { HOME, SETTINGS, STATS }
+    private enum class Page { HOME, SETTINGS, STATS, PERF }
 
     private var page by mutableStateOf(Page.HOME)
     private var refresh by mutableIntStateOf(0)
@@ -129,6 +129,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         org.maplibre.android.MapLibre.getInstance(this)
+        LimitReports.sendQueued(this)   // notatki zgłoszone bez zasięgu
         enableEdgeToEdge()
         setContent {
             DriveTheme {
@@ -137,6 +138,11 @@ class MainActivity : ComponentActivity() {
                     Page.HOME -> HomeScreen()
                     Page.SETTINGS -> SettingsScreen()
                     Page.STATS -> StatsScreen()
+                    Page.PERF -> PerfScreen()
+                }
+                val reportEvent by LimitReports.event.collectAsState()
+                LaunchedEffect(reportEvent) {
+                    reportEvent?.let { toast(it); LimitReports.consumeEvent() }
                 }
                 if (showCarPicker) CarPickerDialog()
                 tripToDelete?.let { DeleteTripDialog(it) }
@@ -184,6 +190,9 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     actions = {
+                        IconButton(onClick = { page = Page.PERF }) {
+                            Text("⏱", style = MaterialTheme.typography.titleLarge)
+                        }
                         IconButton(onClick = { page = Page.STATS }) {
                             Icon(Icons.AutoMirrored.Filled.List, contentDescription = "Statystyki")
                         }
@@ -346,11 +355,13 @@ class MainActivity : ComponentActivity() {
                     Text(
                         when {
                             l.limitKmh == null -> "brak danych"
+                            l.limitIsUser -> "Twoja poprawka"
                             l.limitIsDefault -> "wg typu drogi"
                             else -> "ze znaku (OSM)"
                         },
                         color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelSmall
                     )
+                    LimitFixButton(l)
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -368,6 +379,38 @@ class MainActivity : ComponentActivity() {
                 LiveChip("Bez limitu", "%.1f km".format(pl, l.noLimitM / 1000), Modifier.weight(1f), SpeedColors[0])
             }
             FilledTonalButton(onClick = { TripControl.stop(this@MainActivity); refresh++ }) { Text("Zakończ za minutę") }
+        }
+    }
+
+    /** Rozwijany przycisk: prawidłowy limit na drodze, po której teraz jedziesz. */
+    @Composable
+    private fun LimitFixButton(l: LiveTrip.State) {
+        var open by remember { mutableStateOf(false) }
+        Box {
+            OutlinedButton(
+                onClick = { open = true },
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                modifier = Modifier.padding(top = 4.dp).height(32.dp)
+            ) { Text("Popraw ▾", style = MaterialTheme.typography.labelMedium) }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                Text(
+                    "Prawidłowy limit tutaj:", Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LimitReports.COMMON_LIMITS.forEach { v ->
+                    DropdownMenuItem(
+                        text = { Text("$v km/h", fontWeight = if (v == l.limitKmh) FontWeight.Bold else FontWeight.Normal) },
+                        onClick = {
+                            open = false
+                            val msg = LimitReports.submit(
+                                this@MainActivity, l.lat, l.lon, l.wayId, l.limitKmh, v, Prefs.sendOsmNotes(this@MainActivity)
+                            )
+                            toast(msg)
+                        }
+                    )
+                }
+            }
         }
     }
 
@@ -490,7 +533,11 @@ class MainActivity : ComponentActivity() {
         ) {
             Box(Modifier.fillMaxWidth().height(230.dp)) {
                 // trasa na prawdziwej mapie (bez internetu: z mapy offline albo sam kształt trasy)
-                key(trip.gpx.name) {
+                if (trip.recording) {
+                    val track by LiveTrip.track.collectAsState()
+                    val live by LiveTrip.state.collectAsState()
+                    LiveMap(track, live, Modifier.matchParentSize())
+                } else key(trip.gpx.name) {
                     MapPreview(
                         trip.gpx,
                         background = MaterialTheme.colorScheme.surface,
@@ -769,6 +816,224 @@ class MainActivity : ComponentActivity() {
     }
 
     // =====================================================================
+    // Pomiary: g-metr, 0–100, 100–150, Vmax, odcinki
+    // =====================================================================
+
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun PerfScreen() {
+        val perf by Performance.state.collectAsState()
+        val live by LiveTrip.state.collectAsState()
+        val recording = live != null
+        val gforce = remember { GForce(this@MainActivity) }
+        val g by gforce.g.collectAsState()
+        val pl = Locale("pl")
+        LaunchedEffect(Unit) { Performance.init(this@MainActivity) }
+
+        // czujniki tylko, gdy ekran jest otwarty
+        DisposableEffect(Unit) {
+            gforce.start()
+            onDispose { gforce.stop() }
+        }
+        // uczenie kierunku jazdy z prędkości GPS
+        val prev = remember { doubleArrayOf(-1.0, 0.0) }   // [czas s, prędkość km/h]
+        LaunchedEffect(live?.fixTimeMs) {
+            val l = live ?: return@LaunchedEffect
+            val t = l.fixTimeMs / 1000.0
+            if (prev[0] > 0 && t - prev[0] in 0.2..3.0) gforce.onGpsAccel((l.speedKmh - prev[1]) / 3.6 / (t - prev[0]), l.speedKmh)
+            prev[0] = t; prev[1] = l.speedKmh
+        }
+
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Pomiary") },
+                    navigationIcon = {
+                        IconButton(onClick = { page = Page.HOME }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć") }
+                    }
+                )
+            }
+        ) { pad ->
+            LazyColumn(
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pad.calculateTopPadding(), bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Surface(shape = RoundedCornerShape(14.dp), color = Color(0x33FFC928)) {
+                        Text(
+                            "⚠ Pomiary przyspieszenia i prędkości wykonuj tylko tam, gdzie jest to legalne i bezpieczne (np. tor). " +
+                                "Nie obsługuj telefonu w czasie jazdy – wyniki zapisują się same.",
+                            Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                if (!recording) item {
+                    Button(onClick = { TripControl.start(this@MainActivity) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Włącz nagrywanie – pomiary działają podczas jazdy")
+                    }
+                }
+
+                // ---- prędkość + Vmax ----
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatTile("Prędkość", "%.0f km/h".format(perf.speed), Modifier.weight(1f))
+                        StatTile("Vmax (sesja)", "%.0f km/h".format(perf.vmax), Modifier.weight(1f))
+                    }
+                }
+
+                // ---- przyspieszenia ----
+                item { SectionTitle("Przyspieszenie") }
+                item { PerfRow("0–100 km/h", perf.status0100, perf.running0100, bestOf(perf.runs, "0–100")) }
+                item { PerfRow("100–150 km/h", perf.status100150, perf.running100150, bestOf(perf.runs, "100–150")) }
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { Performance.resetSession() }) { Text("Reset sesji") }
+                        TextButton(onClick = { Performance.clearRuns() }) { Text("Wyczyść wyniki", color = MaterialTheme.colorScheme.error) }
+                    }
+                }
+
+                // ---- g-metr ----
+                item { SectionTitle("Przeciążenia (g)") }
+                item { GMeterCard(g, gforce) }
+
+                // ---- odcinki ----
+                item { SectionTitle("Odcinki pomiarowe") }
+                item {
+                    SettingsGroup {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            perf.segmentName?.let { name ->
+                                Text("⏱ $name: " + formatDuration(perf.segmentElapsed ?: 0.0),
+                                    style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            }
+                            Text(
+                                "Ustaw start i metę w miejscach, gdzie stoisz (na postoju). Potem każdy przejazd przez start " +
+                                    "uruchomi stoper, a przez metę – zapisze czas.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            val l = live
+                            if (perf.newStart == null) {
+                                OutlinedButton(enabled = l != null && l.gpsOk, onClick = { l?.let { Performance.setNewStart(it.lat, it.lon) } }) {
+                                    Text("Ustaw START tutaj")
+                                }
+                            } else {
+                                Text("Start zapisany. Podjedź do mety i ustaw ją.", style = MaterialTheme.typography.labelMedium)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(enabled = l != null && l.gpsOk, onClick = { l?.let { Performance.finishNewSegment(it.lat, it.lon) } }) {
+                                        Text("Ustaw METĘ tutaj")
+                                    }
+                                    TextButton(onClick = { Performance.cancelNewSegment() }) { Text("Anuluj") }
+                                }
+                            }
+                            perf.segments.forEach { seg ->
+                                val best = bestOf(perf.runs, "Odcinek: ${seg.name}")
+                                val len = DisplayTrack.distM(seg.sLat, seg.sLon, seg.eLat, seg.eLon) / 1000
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(seg.name, fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            "%.1f km w linii prostej · najlepszy: %s".format(pl, len, best?.let { formatDuration(it.seconds) } ?: "–"),
+                                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    IconButton(onClick = { Performance.deleteSegment(seg) }) { Icon(Icons.Filled.Delete, contentDescription = "Usuń odcinek") }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ---- historia ----
+                if (perf.runs.isNotEmpty()) {
+                    item { SectionTitle("Ostatnie wyniki") }
+                    items(perf.runs.take(30)) { r ->
+                        val fmt = java.text.SimpleDateFormat("d.MM HH:mm", pl)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(r.type + (r.note?.let { " · $it" } ?: ""), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                            Text(
+                                (if (r.type.startsWith("Odcinek")) formatDuration(r.seconds) else "%.2f s".format(r.seconds)) +
+                                    "  " + fmt.format(java.util.Date(r.timeMs)),
+                                style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun bestOf(runs: List<Performance.Run>, type: String) = runs.filter { it.type == type }.minByOrNull { it.seconds }
+
+    @Composable
+    private fun PerfRow(title: String, status: String, running: Double?, best: Performance.Run?) {
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(status, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Najlepszy: " + (best?.let { "%.2f s".format(it.seconds) } ?: "–"), style = MaterialTheme.typography.labelMedium)
+                }
+                Text(
+                    running?.let { "%.1f s".format(it) } ?: "",
+                    style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary
+                )
+            }
+        }
+    }
+
+    /** „Kulka g”: kropka pokazuje bieżące przeciążenie (w górę = przyspieszanie, w dół = hamowanie). */
+    @Composable
+    private fun GMeterCard(g: GForce.G, gforce: GForce) {
+        val ring = MaterialTheme.colorScheme.outlineVariant
+        val dot = MaterialTheme.colorScheme.primary
+        val label = MaterialTheme.colorScheme.onSurfaceVariant
+        Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+            Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!gforce.available) {
+                    Text("Ten telefon nie ma czujników potrzebnych do pomiaru g.")
+                    return@Column
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.foundation.Canvas(Modifier.size(150.dp)) {
+                        val c = center; val r = size.minDimension / 2
+                        val scale = r / 1.2f                            // pełny promień = 1,2 g
+                        listOf(0.5f, 1.0f).forEach { drawCircle(ring, it * scale, c, style = androidx.compose.ui.graphics.drawscope.Stroke(2f)) }
+                        drawLine(ring, androidx.compose.ui.geometry.Offset(c.x - r, c.y), androidx.compose.ui.geometry.Offset(c.x + r, c.y), 1f)
+                        drawLine(ring, androidx.compose.ui.geometry.Offset(c.x, c.y - r), androidx.compose.ui.geometry.Offset(c.x, c.y + r), 1f)
+                        val x = (g.gLat.coerceIn(-1.2, 1.2) * scale).toFloat()
+                        val y = (-g.gLong.coerceIn(-1.2, 1.2) * scale).toFloat()
+                        drawCircle(dot, 11f, androidx.compose.ui.geometry.Offset(c.x + x, c.y + y))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("%.2f g".format(g.total), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                        if (g.calibrated) {
+                            Text("wzdłużnie %+.2f · w bok %+.2f".format(g.gLong, g.gLat), style = MaterialTheme.typography.labelSmall, color = label)
+                            Text("Maks. hamowanie: %.2f g".format(g.maxBrake), style = MaterialTheme.typography.bodySmall)
+                            Text("Maks. przyspieszenie: %.2f g".format(g.maxAccel), style = MaterialTheme.typography.bodySmall)
+                            Text("Zakręt w lewo: %.2f g".format(g.maxLeft), style = MaterialTheme.typography.bodySmall)
+                            Text("Zakręt w prawo: %.2f g".format(g.maxRight), style = MaterialTheme.typography.bodySmall)
+                        } else {
+                            Text(
+                                "Uczę się, jak telefon leży w aucie (${g.learnSamples}/${GForce.MIN_SAMPLES}). " +
+                                    "Kilka razy normalnie przyspiesz i zahamuj podczas nagrywania.",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { gforce.resetPeaks() }) { Text("Reset maksimów") }
+                    TextButton(onClick = { gforce.recalibrate() }) { Text("Kalibruj od nowa") }
+                }
+                Text(
+                    "Telefon musi być stabilnie zamocowany w uchwycie. Po zmianie ułożenia telefonu użyj „Kalibruj od nowa”.",
+                    style = MaterialTheme.typography.labelSmall, color = label
+                )
+            }
+        }
+    }
+
+    // =====================================================================
     // Ustawienia
     // =====================================================================
 
@@ -827,6 +1092,17 @@ class MainActivity : ComponentActivity() {
                             },
                             colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                         )
+                        var osmNotes by remember { mutableStateOf(Prefs.sendOsmNotes(this@MainActivity)) }
+                        ListItem(
+                            headlineContent = { Text("Wysyłaj poprawki do OpenStreetMap") },
+                            supportingContent = {
+                                Text("Poprawka z przycisku „Popraw ▾” działa od razu u Ciebie. Gdy włączone – trafia też jako anonimowa notatka do OSM, gdzie mapujący sprawdzą znak. Twoich poprawek: ${OnlineLimitCache.get(this@MainActivity).overrideCount()}")
+                            },
+                            trailingContent = {
+                                Switch(checked = osmNotes, onCheckedChange = { osmNotes = it; Prefs.setSendOsmNotes(this@MainActivity, it) })
+                            },
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent)
+                        )
                         ListItem(
                             headlineContent = { Text("Importuj bazę offline") },
                             supportingContent = { Text("Opcjonalnie – plik speedlimits.sqlite (patrz README)") },
@@ -835,6 +1111,9 @@ class MainActivity : ComponentActivity() {
                         )
                     }
                 }
+
+                item { SectionTitle("Moje zgłoszenia limitów") }
+                item { ReportsSection() }
 
                 item { SectionTitle("Mapa offline") }
                 item { OfflineMapSection() }
@@ -869,6 +1148,57 @@ class MainActivity : ComponentActivity() {
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 12.dp, start = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun ReportsSection() {
+        LaunchedEffect(Unit) { LimitReports.load(this@MainActivity) }
+        val reports by LimitReports.reports.collectAsState()
+        val fmt = remember { java.text.SimpleDateFormat("d.MM HH:mm", Locale("pl")) }
+        SettingsGroup {
+            Column(Modifier.padding(vertical = 6.dp)) {
+                if (reports.isEmpty()) {
+                    Text(
+                        "Brak zgłoszeń. W trakcie jazdy użyj „Popraw ▾” pod znakiem ograniczenia.",
+                        Modifier.padding(16.dp), style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                reports.take(30).forEach { r ->
+                    ListItem(
+                        headlineContent = {
+                            Text((r.shownLimit?.let { "$it → " } ?: "") + "${r.correctKmh} km/h · " + fmt.format(java.util.Date(r.id)))
+                        },
+                        supportingContent = {
+                            Text(
+                                when (r.status) {
+                                    "sent" -> "Wysłano do OSM" + (r.noteId?.takeIf { it > 0 }?.let { " – notatka nr $it (dotknij, by otworzyć)" } ?: "")
+                                    "queued" -> "Czeka na wysłanie" + (r.error?.let { " ($it)" } ?: "")
+                                    "failed" -> "Nie wysłano: ${r.error ?: "nieznany błąd"}"
+                                    else -> "Tylko lokalnie"
+                                } + if (r.wayId == null) " · droga nierozpoznana" else "",
+                                color = if (r.status == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        trailingContent = {
+                            Row {
+                                if (r.status == "failed" || r.status == "local") {
+                                    TextButton(onClick = { LimitReports.retry(this@MainActivity, r) }) {
+                                        Text(if (r.status == "local") "Wyślij" else "Ponów")
+                                    }
+                                }
+                                IconButton(onClick = { LimitReports.remove(this@MainActivity, r) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Usuń zgłoszenie i poprawkę")
+                                }
+                            }
+                        },
+                        modifier = Modifier.clickable(enabled = (r.noteId ?: 0) > 0) {
+                            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/note/${r.noteId}")))
+                        },
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent)
                     )
                 }
             }

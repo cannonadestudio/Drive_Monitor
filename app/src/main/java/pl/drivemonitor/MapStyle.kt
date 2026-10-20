@@ -10,6 +10,7 @@ import org.maplibre.android.style.layers.PropertyFactory
 import org.maplibre.android.style.sources.GeoJsonSource
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.FeatureCollection
+import org.maplibre.geojson.LineString
 import org.maplibre.geojson.Point
 
 /** Styl mapy (OpenStreetMap / OpenFreeMap) i warstwy trasy wspólne dla ekranu trasy i podglądów. */
@@ -43,6 +44,21 @@ object MapStyle {
                 PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
             ),
         )
+    }
+
+    /** Odcinki uproszczonej trasy pogrupowane wg kategorii prędkości. */
+    fun featuresFromThumb(pts: List<ThumbPoint>): FeatureCollection {
+        val features = ArrayList<Feature>()
+        var cur = ArrayList<Point>(); var cat = -1
+        for (i in 1 until pts.size) {
+            if (pts[i].cat != cat) {
+                if (cur.size >= 2) features += Feature.fromGeometry(LineString.fromLngLats(cur)).also { it.addStringProperty("cat", cat.toString()) }
+                cur = arrayListOf(Point.fromLngLat(pts[i - 1].lon, pts[i - 1].lat)); cat = pts[i].cat
+            }
+            cur += Point.fromLngLat(pts[i].lon, pts[i].lat)
+        }
+        if (cur.size >= 2) features += Feature.fromGeometry(LineString.fromLngLats(cur)).also { it.addStringProperty("cat", cat.toString()) }
+        return FeatureCollection.fromFeatures(features)
     }
 
     fun carSource(lat: Double, lon: Double) = GeoJsonSource(CAR_SOURCE, Feature.fromGeometry(Point.fromLngLat(lon, lat)))

@@ -24,23 +24,33 @@ class SpeedLimitProvider(ctx: Context) {
     }
     private val online = OnlineLimitCache.get(ctx)
 
-    data class Limit(val kmh: Int, val source: String)   // source: "osm" | "default:<typ drogi>"
+    /** source: "osm" | "user" (Twoja poprawka) | "default:<typ drogi>"; wayId – droga OSM, jeśli znana */
+    data class Limit(val kmh: Int, val source: String, val wayId: Long? = null)
+
+    // starsze bazy offline nie mają kolumny way_id
+    private val offlineHasWayId = offline?.let { db ->
+        runCatching { db.rawQuery("PRAGMA table_info(segments)", null).use { c ->
+            var found = false
+            while (c.moveToNext()) if (c.getString(1) == "way_id") found = true
+            found
+        } }.getOrDefault(false)
+    } ?: false
 
     /** @param bearing kierunek jazdy w stopniach (null gdy stoimy). */
     fun lookup(lat: Double, lon: Double, bearing: Float?): Limit? {
         if (offline == null) online.ensureAround(lat, lon, bearing)
-        val a = offline?.let { best(it, lat, lon, bearing) }
-        val b = best(online.db, lat, lon, bearing)
+        val a = offline?.let { best(it, lat, lon, bearing, offlineHasWayId) }
+        val b = best(online.db, lat, lon, bearing, true)
         return listOfNotNull(a, b).minByOrNull { it.first }?.second
     }
 
-    private fun best(db: SQLiteDatabase, lat: Double, lon: Double, bearing: Float?): Pair<Double, Limit>? {
+    private fun best(db: SQLiteDatabase, lat: Double, lon: Double, bearing: Float?, hasWayId: Boolean): Pair<Double, Limit>? {
         val dLat = SEARCH_M / 111_320.0
         val dLon = SEARCH_M / (111_320.0 * cos(Math.toRadians(lat)))
 
         db.rawQuery(
-            """SELECT lat1, lon1, lat2, lon2, maxspeed, highway, oneway FROM segments
-               WHERE maxlat >= ? AND minlat <= ? AND maxlon >= ? AND minlon <= ?""",
+            "SELECT lat1, lon1, lat2, lon2, maxspeed, highway, oneway, " + (if (hasWayId) "way_id" else "NULL") +
+                " FROM segments WHERE maxlat >= ? AND minlat <= ? AND maxlon >= ? AND minlon <= ?",
             arrayOf(
                 (lat - dLat).toString(), (lat + dLat).toString(),
                 (lon - dLon).toString(), (lon + dLon).toString()
@@ -64,8 +74,10 @@ class SpeedLimitProvider(ctx: Context) {
                 }
                 if (score < bestScore) {
                     val highway = c.getString(5) ?: "unclassified"
-                    val limit = if (!c.isNull(4)) Limit(c.getInt(4), "osm")
-                    else defaultFor(highway)?.let { Limit(it, "default:$highway") }
+                    val wayId = if (c.isNull(7)) null else c.getLong(7)
+                    val limit = online.overrideFor(wayId)?.let { Limit(it, "user", wayId) }
+                        ?: if (!c.isNull(4)) Limit(c.getInt(4), "osm", wayId)
+                        else defaultFor(highway)?.let { Limit(it, "default:$highway", wayId) }
                     if (limit != null) { bestScore = score; best = limit }
                 }
             }

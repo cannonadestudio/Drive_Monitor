@@ -21,6 +21,14 @@ object Prefs {
             .apply()
     }
 
+    /** Czy poprawki limitu wysyłać też jako notatki do OpenStreetMap. */
+    fun sendOsmNotes(ctx: Context): Boolean =
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).getBoolean("osm_notes", true)
+
+    fun setSendOsmNotes(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(FILE, Context.MODE_PRIVATE).edit().putBoolean("osm_notes", on).apply()
+    }
+
     fun isCar(ctx: Context, mac: String?): Boolean =
         mac != null && mac.equals(carMac(ctx), ignoreCase = true)
 }

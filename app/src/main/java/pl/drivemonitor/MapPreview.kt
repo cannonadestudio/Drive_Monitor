@@ -59,17 +59,7 @@ fun MapPreview(gpx: File, background: Color, gridColor: Color, modifier: Modifie
 private suspend fun snapshot(ctx: android.content.Context, pts: List<ThumbPoint>, w: Int, h: Int, density: Float): Bitmap? =
     suspendCancellableCoroutine { cont ->
         MapLibre.getInstance(ctx.applicationContext)
-        // odcinki w kolorach kategorii
-        val features = ArrayList<Feature>()
-        var cur = ArrayList<Point>(); var cat = -1
-        for (i in 1 until pts.size) {
-            if (pts[i].cat != cat) {
-                if (cur.size >= 2) features += Feature.fromGeometry(LineString.fromLngLats(cur)).also { it.addStringProperty("cat", cat.toString()) }
-                cur = arrayListOf(Point.fromLngLat(pts[i - 1].lon, pts[i - 1].lat)); cat = pts[i].cat
-            }
-            cur += Point.fromLngLat(pts[i].lon, pts[i].lat)
-        }
-        if (cur.size >= 2) features += Feature.fromGeometry(LineString.fromLngLats(cur)).also { it.addStringProperty("cat", cat.toString()) }
+        val features = MapStyle.featuresFromThumb(pts)
 
         // obszar trasy z marginesem 15%
         var s = 90.0; var n = -90.0; var we = 180.0; var e = -180.0
@@ -77,7 +67,7 @@ private suspend fun snapshot(ctx: android.content.Context, pts: List<ThumbPoint>
         val mLat = maxOf((n - s) * 0.15, 0.002); val mLon = maxOf((e - we) * 0.15, 0.003)
         val bounds = LatLngBounds.Builder().include(LatLng(s - mLat, we - mLon)).include(LatLng(n + mLat, e + mLon)).build()
 
-        val style = Style.Builder().fromUri(MapStyle.STYLE_URL).withSource(MapStyle.routeSource(FeatureCollection.fromFeatures(features)))
+        val style = Style.Builder().fromUri(MapStyle.STYLE_URL).withSource(MapStyle.routeSource(features))
         MapStyle.routeLayers(widthScale = 0.8f).forEach { style.withLayer(it) }
 
         val snapshotter = MapSnapshotter(

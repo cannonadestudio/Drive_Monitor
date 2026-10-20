@@ -74,7 +74,7 @@ class Handler(osmium.SimpleHandler):
             self.batch.append((
                 lat1, lon1, lat2, lon2,
                 min(lat1, lat2), max(lat1, lat2), min(lon1, lon2), max(lon1, lon2),
-                speed, hw, oneway,
+                speed, hw, oneway, w.id,
             ))
         if len(self.batch) > 100_000:
             self.flush()
@@ -82,7 +82,7 @@ class Handler(osmium.SimpleHandler):
     def flush(self):
         self.cur.executemany(
             "INSERT INTO segments (lat1, lon1, lat2, lon2, minlat, maxlat, minlon, maxlon,"
-            " maxspeed, highway, oneway) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            " maxspeed, highway, oneway, way_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             self.batch,
         )
         self.count += len(self.batch)
@@ -98,7 +98,7 @@ def main(src, dst):
         CREATE TABLE segments (
             lat1 REAL, lon1 REAL, lat2 REAL, lon2 REAL,
             minlat REAL, maxlat REAL, minlon REAL, maxlon REAL,
-            maxspeed INTEGER, highway TEXT, oneway INTEGER
+            maxspeed INTEGER, highway TEXT, oneway INTEGER, way_id INTEGER
         );
         PRAGMA journal_mode = OFF;
         PRAGMA synchronous = OFF;

@@ -15,6 +15,14 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **1.1** – „Popraw ▾”: poprawka zmienia znak natychmiast (także na postoju); notatki do OSM
+  w kolejce z prawdziwym wynikiem wysyłki (nr notatki albo powód odrzucenia), ponawianie
+  bez zasięgu; Ustawienia → Moje zgłoszenia (status, link do notatki, ponów, usuń poprawkę).
+- **1.0** – żywa mapa trwającej jazdy na ekranie głównym; rozwijany przycisk „Popraw ▾”
+  (20/30/40/50/70/90/120 km/h) – poprawka limitu zapisywana dla całej drogi OSM i opcjonalnie
+  wysyłana jako anonimowa notatka do OpenStreetMap; ekran **Pomiary** (⏱): g-metr
+  (hamowanie, przyspieszenie, zakręty, autokalibracja ułożenia telefonu), automatyczne 0–100
+  i 100–150 km/h, Vmax sesji z resetem, własne odcinki pomiarowe z najlepszymi czasami.
 - **0.9** – ekran główny sam wykrywa start i koniec jazdy; karta „Ta jazda” na żywo:
   prędkość, znak ograniczenia w prawym górnym rogu (ze znaku OSM / wg typu drogi), czas,
   dystans, km w limicie / ponad / bez limitu, średnia i maks. prędkość; stabilizacja

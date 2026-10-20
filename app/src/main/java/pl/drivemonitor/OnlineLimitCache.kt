@@ -22,20 +22,47 @@ import kotlin.math.*
  */
 class OnlineLimitCache private constructor(ctx: Context) {
 
-    private val helper = object : SQLiteOpenHelper(ctx.applicationContext, DB_NAME, null, 1) {
+    private val helper = object : SQLiteOpenHelper(ctx.applicationContext, DB_NAME, null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL(
                 """CREATE TABLE segments (
                     tile TEXT, lat1 REAL, lon1 REAL, lat2 REAL, lon2 REAL,
                     minlat REAL, maxlat REAL, minlon REAL, maxlon REAL,
-                    maxspeed INTEGER, highway TEXT, oneway INTEGER)"""
+                    maxspeed INTEGER, highway TEXT, oneway INTEGER, way_id INTEGER)"""
             )
             db.execSQL("CREATE INDEX idx_bbox ON segments (minlat, minlon)")
             db.execSQL("CREATE INDEX idx_tile ON segments (tile)")
             db.execSQL("CREATE TABLE tiles (tile TEXT PRIMARY KEY, fetched INTEGER)")
+            createOverrides(db)
         }
-        override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {}
+        // v2: identyfikator drogi OSM (do poprawek limitu) – dane dróg pobierzemy od nowa
+        override fun onUpgrade(db: SQLiteDatabase, o: Int, n: Int) {
+            db.execSQL("DROP TABLE IF EXISTS segments")
+            db.execSQL("DROP TABLE IF EXISTS tiles")
+            db.execSQL("DROP TABLE IF EXISTS overrides")
+            onCreate(db)
+        }
+        private fun createOverrides(db: SQLiteDatabase) = db.execSQL(
+            "CREATE TABLE IF NOT EXISTS overrides (way_id INTEGER PRIMARY KEY, maxspeed INTEGER, ts INTEGER)"
+        )
     }.apply { setWriteAheadLoggingEnabled(true) }
+
+    /** Poprawki ograniczeń wprowadzone przez użytkownika: id drogi OSM -> km/h. */
+    private val overrides = ConcurrentHashMap<Long, Int>()
+
+    fun overrideFor(wayId: Long?): Int? = wayId?.let { overrides[it] }
+
+    fun setOverride(wayId: Long, kmh: Int) {
+        db.execSQL("INSERT OR REPLACE INTO overrides VALUES (?, ?, ?)", arrayOf(wayId, kmh, System.currentTimeMillis()))
+        overrides[wayId] = kmh
+    }
+
+    fun removeOverride(wayId: Long) {
+        db.execSQL("DELETE FROM overrides WHERE way_id = ?", arrayOf(wayId))
+        overrides.remove(wayId)
+    }
+
+    fun overrideCount() = overrides.size
 
     val db: SQLiteDatabase get() = helper.writableDatabase
 
@@ -45,6 +72,9 @@ class OnlineLimitCache private constructor(ctx: Context) {
     private val failedAt = ConcurrentHashMap<String, Long>()
 
     init {
+        db.rawQuery("SELECT way_id, maxspeed FROM overrides", null).use {
+            while (it.moveToNext()) overrides[it.getLong(0)] = it.getInt(1)
+        }
         val minFetched = System.currentTimeMillis() - MAX_AGE_MS
         db.rawQuery("SELECT tile FROM tiles WHERE fetched > ?", arrayOf(minFetched.toString())).use {
             while (it.moveToNext()) fresh += it.getString(0)
@@ -107,7 +137,7 @@ class OnlineLimitCache private constructor(ctx: Context) {
         try {
             db.delete("segments", "tile = ?", arrayOf(key))
             val stmt = db.compileStatement(
-                "INSERT INTO segments VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+                "INSERT INTO segments VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             var count = 0
             for (i in 0 until elements.length()) {
@@ -115,6 +145,7 @@ class OnlineLimitCache private constructor(ctx: Context) {
                 val tags = way.optJSONObject("tags") ?: continue
                 val geom = way.optJSONArray("geometry") ?: continue
                 val highway = tags.optString("highway")
+                val wayId = way.optLong("id")
                 val speed = parseMaxspeed(tags)
                 val onewayTag = tags.optString("oneway")
                 val reverse = onewayTag == "-1"
@@ -134,6 +165,7 @@ class OnlineLimitCache private constructor(ctx: Context) {
                     if (speed != null) stmt.bindLong(10, speed.toLong()) else stmt.bindNull(10)
                     stmt.bindString(11, highway)
                     stmt.bindLong(12, if (oneway) 1 else 0)
+                    stmt.bindLong(13, wayId)
                     stmt.executeInsert()
                     count++
                 }
