@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write   # publikacja APK w zakładce Releases
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,3 +32,16 @@ jobs:
           name: DriveMonitor-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      # Stały link do najnowszej wersji (do otwarcia na telefonie):
+      # https://github.com/cannonadestudio/drive_monitor/releases/latest/download/DriveMonitor.apk
+      - name: Publish APK to Releases
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk DriveMonitor.apk
+          gh release create "build-${{ github.run_number }}" DriveMonitor.apk \
+            --title "DriveMonitor – build ${{ github.run_number }}" \
+            --notes "Automatyczny build z commita ${{ github.sha }}. Pobierz DriveMonitor.apk i zainstaluj na telefonie." \
+            --latest
