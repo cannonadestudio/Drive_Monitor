@@ -15,6 +15,9 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **1.4** – naprawa restartu aplikacji po START w pomiarze 0–100/100–150 (wykres rysował opisy osi poza obszarem);
+  nowe **Punkty i nagrody**: ocena każdej trasy 0–100 i gwiazdki, punkty za km w limicie z mnożnikiem,
+  poziomy (Kursant → Legenda szos), seria dobrych tras, 11 odznak; karta poziomu na ekranie głównym.
 - **1.3** – nowy pomiar 0–100 i 100–150 krok po kroku: START → „Zatrzymaj auto” → „Gotowy – ruszaj!” →
   stoper, prędkość, pasek postępu, przyspieszenie w g i wykres na żywo (sygnał dźwiękowy na starcie i mecie),
   potem raport: wynik, porównanie z rekordem, międzyczasy, dystans, średnie i maks. g. Raporty dostępne z historii.

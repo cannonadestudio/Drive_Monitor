@@ -179,6 +179,7 @@ object Performance {
     fun closeMeasure() { _state.value = _state.value.copy(measure = null) }
 
     /** Otwiera raport zapisanego przejazdu. */
+    @Synchronized
     fun showReport(r: Run) {
         val (from, to) = r.type.split("–").mapNotNull { it.trim().toIntOrNull() }.let { (it.getOrNull(0) ?: 0) to (it.getOrNull(1) ?: 100) }
         _state.value = _state.value.copy(

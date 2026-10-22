@@ -56,7 +56,7 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    private enum class Page { HOME, SETTINGS, STATS, PERF }
+    private enum class Page { HOME, SETTINGS, STATS, PERF, REWARDS }
 
     private var page by mutableStateOf(Page.HOME)
     private var refresh by mutableIntStateOf(0)
@@ -141,6 +141,7 @@ class MainActivity : ComponentActivity() {
                     Page.SETTINGS -> SettingsScreen()
                     Page.STATS -> StatsScreen()
                     Page.PERF -> PerfScreen()
+                    Page.REWARDS -> RewardsScreen()
                 }
                 val reportEvent by LimitReports.event.collectAsState()
                 LaunchedEffect(reportEvent) {
@@ -170,6 +171,8 @@ class MainActivity : ComponentActivity() {
         val live by LiveTrip.state.collectAsState()
         val recording = live != null || TripRecorderService.currentFile != null
         val trips = remember(r, recording) { TripRepository.list(this) }
+        val score = remember(trips) { DriveScore.summary(trips) }
+        val newBadges = remember(score) { DriveScore.newBadges(this, score) }
         val setupDone = remember(r) { setupDoneCount() }
 
         // w trakcie nagrywania odświeżamy listę (miniatura trwającej trasy) co 15 s
@@ -212,6 +215,7 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item { StatusCard(recording, setupDone) }
+                item { PointsCard(score, newBadges) }
 
                 val latest = trips.firstOrNull()
                 // po jeździe: podsumowanie ostatniej trasy (w trakcie jazdy liczby są w karcie na żywo)
@@ -232,6 +236,154 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun scoreColor(score: Int) = when {
+        score >= 95 -> Color(0xFF2E7D32); score >= 85 -> Color(0xFF7CB342); score >= 70 -> Color(0xFFF9A825); else -> Color(0xFFE53935)
+    }
+
+    private fun scoreComment(t: DriveScore.TripScore) = when {
+        t.score >= 95 -> "Wzorowo – pełny mnożnik ×2" + if (t.clean) " i premia za czystą trasę" else ""
+        t.score >= 85 -> "Bardzo dobrze – mnożnik ×1,5"
+        t.score >= 70 -> "Dobrze, ale były przekroczenia lub gwałtowne manewry"
+        else -> "Sporo przekroczeń – punkty ×0,5"
+    }
+
+    /** Ekran główny: poziom, punkty, seria – dotknięcie otwiera Nagrody. */
+    @Composable
+    private fun PointsCard(s: DriveScore.Summary, newBadges: List<DriveScore.Badge>) {
+        Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.secondaryContainer,
+            modifier = Modifier.fillMaxWidth().clickable { page = Page.REWARDS }) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("🏆", style = MaterialTheme.typography.headlineMedium)
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("Poziom ${s.level.n} · ${s.level.name}", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            "${s.points} pkt" + (if (s.streak >= 2) " · seria ${s.streak} dobrych tras 🔥" else "") +
+                                (s.avgScore30?.let { " · ocena 30 dni: $it" } ?: ""),
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    Text("›", style = MaterialTheme.typography.headlineMedium)
+                }
+                val next = s.level.to
+                if (next != null) {
+                    LinearProgressIndicator(
+                        progress = { ((s.points - s.level.from).toFloat() / (next - s.level.from)).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                    )
+                    Text("Do następnego poziomu: ${next - s.points} pkt", style = MaterialTheme.typography.labelSmall)
+                }
+                newBadges.forEach { b ->
+                    Text("🎉 Nowa odznaka: ${b.icon} ${b.name}", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+
+    /** Nagrody: poziom, zasady punktacji, odznaki, oceny ostatnich tras. */
+    @OptIn(ExperimentalMaterial3Api::class)
+    @Composable
+    private fun RewardsScreen() {
+        val s = remember { DriveScore.summary(TripRepository.list(this)) }
+        LaunchedEffect(Unit) { DriveScore.markSeen(this@MainActivity, s) }
+        val pl = Locale("pl")
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Punkty i nagrody") },
+                    navigationIcon = {
+                        IconButton(onClick = { page = Page.HOME }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Wróć") }
+                    }
+                )
+            }
+        ) { pad ->
+            LazyColumn(
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = pad.calculateTopPadding(), bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.secondaryContainer) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Poziom ${s.level.n}", style = MaterialTheme.typography.labelLarge)
+                            Text(s.level.name, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                            Text("${s.points} pkt", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            s.level.to?.let { next ->
+                                LinearProgressIndicator(
+                                    progress = { ((s.points - s.level.from).toFloat() / (next - s.level.from)).coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(10.dp).clip(RoundedCornerShape(5.dp)),
+                                )
+                                Text("Następny: ${DriveScore.levelFor(next).name} – brakuje ${next - s.points} pkt",
+                                    style = MaterialTheme.typography.bodySmall)
+                            } ?: Text("Najwyższy poziom!", fontWeight = FontWeight.Bold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(top = 6.dp)) {
+                                StatTile("Seria 85+", if (s.streak > 0) "${s.streak} 🔥" else "0", Modifier.weight(1f))
+                                StatTile("Ocena 30 dni", s.avgScore30?.toString() ?: "–", Modifier.weight(1f))
+                                StatTile("Odznaki", "${s.badges.count { it.unlocked }}/${s.badges.size}", Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+                item { SectionTitle("Jak zdobywać punkty") }
+                item {
+                    SettingsGroup {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("• Każda trasa dostaje ocenę 0–100 i 0–3 gwiazdki.", style = MaterialTheme.typography.bodySmall)
+                            Text("• Ocenę obniża jazda ponad limit (+20 km/h boli dużo bardziej niż +5) oraz gwałtowne hamowania i przyspieszenia.", style = MaterialTheme.typography.bodySmall)
+                            Text("• 1 pkt za każdy km w limicie (½ pkt, gdy limit nieznany).", style = MaterialTheme.typography.bodySmall)
+                            Text("• Mnożnik: ocena 95+ ×2 · 85+ ×1,5 · 70+ ×1 · poniżej ×0,5.", style = MaterialTheme.typography.bodySmall)
+                            Text("• Czysta trasa (min. 3 km, ocena 95+): +10 pkt premii.", style = MaterialTheme.typography.bodySmall)
+                            Text("• Seria rośnie z każdą kolejną trasą z oceną 85+, słabsza trasa ją zeruje.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                item { SectionTitle("Odznaki") }
+                items(s.badges.chunked(2)) { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { b -> BadgeTile(b, Modifier.weight(1f)) }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+                if (s.trips.isNotEmpty()) {
+                    item { SectionTitle("Ostatnie trasy") }
+                    items(s.trips.take(20)) { t ->
+                        val fmt = java.text.SimpleDateFormat("EEE d.MM HH:mm", pl)
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text(fmt.format(java.util.Date(t.startMs)), style = MaterialTheme.typography.bodySmall)
+                                Text("%.1f km".format(pl, t.km), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text(DriveScore.starsText(t.stars), color = Color(0xFFFFB300))
+                            Spacer(Modifier.width(10.dp))
+                            Text("${t.score}", fontWeight = FontWeight.Bold, color = scoreColor(t.score), modifier = Modifier.width(34.dp))
+                            Text("+${t.points}", style = MaterialTheme.typography.labelLarge, modifier = Modifier.width(48.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.End)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun BadgeTile(b: DriveScore.Badge, modifier: Modifier) {
+        Surface(
+            shape = RoundedCornerShape(16.dp), modifier = modifier.height(130.dp),
+            color = if (b.unlocked) Color(0x33FFB300) else MaterialTheme.colorScheme.surfaceVariant,
+        ) {
+            Column(Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(if (b.unlocked) b.icon else "🔒", style = MaterialTheme.typography.headlineSmall)
+                Text(b.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                Text(b.how, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center, maxLines = 3)
+                if (!b.unlocked && b.progress != null)
+                    Text(b.progress, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold)
+            }
+        }
+    }
+
     /** Liczby ostatniej zakończonej jazdy. */
     @Composable
     private fun LastTripTiles(js: JSONObject) {
@@ -240,7 +392,22 @@ class MainActivity : ComponentActivity() {
         val km = js.optDouble("distanceKm", 0.0)
         val overKm = cats[2] + cats[3] + cats[4] + cats[5]
         val seconds = js.optDouble("durationS", js.optDouble("durationMin", 0.0) * 60)
+        val ts = remember(js) { DriveScore.scoreTrip(js) }
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Surface(shape = RoundedCornerShape(18.dp), color = scoreColor(ts.score).copy(alpha = 0.18f),
+                modifier = Modifier.fillMaxWidth().clickable { page = Page.REWARDS }) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Ocena jazdy", style = MaterialTheme.typography.labelLarge)
+                        Text(DriveScore.starsText(ts.stars), style = MaterialTheme.typography.titleLarge, color = Color(0xFFFFB300))
+                        Text(scoreComment(ts), style = MaterialTheme.typography.bodySmall)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("${ts.score}", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black, color = scoreColor(ts.score))
+                        Text("+${ts.points} pkt", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatTile("Dystans", "%.1f km".format(pl, km), Modifier.weight(1f))
                 StatTile("Czas", formatDuration(seconds), Modifier.weight(1f))
@@ -637,6 +804,11 @@ class MainActivity : ComponentActivity() {
                         color = if (trip.recording) Color(0xFFE53935) else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
+                    if (!trip.recording && s.optDouble("distanceKm", 0.0) >= 0.3) {
+                        val ts = remember(s) { DriveScore.scoreTrip(s) }
+                        Text("${DriveScore.starsText(ts.stars)}  ${ts.score}/100 · +${ts.points} pkt",
+                            style = MaterialTheme.typography.labelMedium, color = scoreColor(ts.score), fontWeight = FontWeight.SemiBold)
+                    }
                     Text(
                         "%.1f km · %s · max %.0f km/h".format(
                             Locale("pl"), s.optDouble("distanceKm", 0.0),
@@ -1220,24 +1392,36 @@ class MainActivity : ComponentActivity() {
         val gColor = Color(0xFFEF6C00)
         val measurer = androidx.compose.ui.text.rememberTextMeasurer()
         val style = MaterialTheme.typography.labelSmall.copy(color = labelColor)
+        val vSpan = (to - from).coerceAtLeast(1)
+        val tSpan = if (tMax.isFinite() && tMax > 0.5) tMax else 5.0
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant, modifier = modifier) {
-            androidx.compose.foundation.Canvas(Modifier.fillMaxSize().padding(start = 34.dp, end = 12.dp, top = 12.dp, bottom = 22.dp)) {
-                val w = size.width; val h = size.height
-                val tSpan = if (tMax > 0) tMax else 1.0
-                fun x(t: Double) = (t / tSpan * w).toFloat()
-                fun yv(v: Double) = (h - (v - from) / (to - from) * h).toFloat().coerceIn(0f, h)
-                fun yg(gv: Double) = (h - gv.coerceIn(0.0, 1.0) * h).toFloat()
-                val step = if (to - from <= 50) 10 else 20
+            androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+                // obszar wykresu z marginesami na opisy osi (opisy rysujemy wewnątrz płótna – poza nim Compose zgłasza błąd)
+                val left = 34.dp.toPx(); val right = size.width - 12.dp.toPx()
+                val top = 18.dp.toPx(); val bottom = size.height - 20.dp.toPx()
+                if (right <= left || bottom <= top) return@Canvas
+                val w = right - left; val h = bottom - top
+                fun x(t: Double) = left + (t / tSpan * w).toFloat().coerceIn(0f, w)
+                fun yv(v: Double) = top + (h - (v - from) / vSpan * h).toFloat().coerceIn(0f, h)
+                fun yg(gv: Double) = top + (h - gv.coerceIn(0.0, 1.0) * h).toFloat()
+                fun label(text: String, px: Float, py: Float, color: Color = labelColor) {
+                    val res = measurer.measure(text, style.copy(color = color))
+                    val tx = px.coerceIn(0f, (size.width - res.size.width).coerceAtLeast(0f))
+                    val ty = py.coerceIn(0f, (size.height - res.size.height).coerceAtLeast(0f))
+                    drawText(res, topLeft = androidx.compose.ui.geometry.Offset(tx, ty))
+                }
+                val step = if (vSpan <= 50) 10 else 20
                 var v = from
                 while (v <= to) {
-                    drawLine(grid, androidx.compose.ui.geometry.Offset(0f, yv(v.toDouble())), androidx.compose.ui.geometry.Offset(w, yv(v.toDouble())), 1f)
-                    drawText(measurer, "$v", androidx.compose.ui.geometry.Offset(-30.dp.toPx(), yv(v.toDouble()) - 8.dp.toPx()), style)
+                    val yy = yv(v.toDouble())
+                    drawLine(grid, androidx.compose.ui.geometry.Offset(left, yy), androidx.compose.ui.geometry.Offset(right, yy), 1f)
+                    label("$v", 4.dp.toPx(), yy - 7.dp.toPx())
                     v += step
                 }
-                val tStep = if (tSpan <= 12) 2 else 5
+                val tStep = when { tSpan <= 12 -> 2; tSpan <= 40 -> 5; else -> 10 }
                 var tt = 0
                 while (tt <= tSpan) {
-                    drawText(measurer, "${tt}s", androidx.compose.ui.geometry.Offset(x(tt.toDouble()) - 6.dp.toPx(), h + 4.dp.toPx()), style)
+                    label("${tt}s", x(tt.toDouble()) - 6.dp.toPx(), bottom + 3.dp.toPx())
                     tt += tStep
                 }
                 if (samples.size >= 2) {
@@ -1250,8 +1434,8 @@ class MainActivity : ComponentActivity() {
                     val last = samples.last()
                     drawCircle(speedColor, 6.dp.toPx(), androidx.compose.ui.geometry.Offset(x(last.t), yv(last.v)))
                 }
-                drawText(measurer, "— km/h", androidx.compose.ui.geometry.Offset(w - 110.dp.toPx(), 0f), style.copy(color = speedColor))
-                drawText(measurer, "— g", androidx.compose.ui.geometry.Offset(w - 46.dp.toPx(), 0f), style.copy(color = gColor))
+                label("— km/h", right - 100.dp.toPx(), 2.dp.toPx(), speedColor)
+                label("— g", right - 36.dp.toPx(), 2.dp.toPx(), gColor)
             }
         }
     }
