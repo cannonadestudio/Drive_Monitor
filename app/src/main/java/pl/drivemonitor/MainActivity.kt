@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -215,6 +216,7 @@ class MainActivity : ComponentActivity() {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 item { StatusCard(recording, setupDone) }
+                item { ReturnCard(trips) }
                 item { PointsCard(score, newBadges) }
 
                 val latest = trips.firstOrNull()
@@ -851,6 +853,10 @@ class MainActivity : ComponentActivity() {
                         open = false
                         runCatching { GpxExport.share(this@MainActivity, trip.gpx) }.onFailure { toast("Błąd: ${it.message}") }
                     }
+                )
+                if (!trip.recording) DropdownMenuItem(
+                    text = { Text("↩ Wróć tą trasą (Google Maps)") },
+                    onClick = { open = false; startReturn(listOf(trip)) }
                 )
                 DropdownMenuItem(
                     text = { Text("Usuń trasę") },
@@ -1755,6 +1761,69 @@ class MainActivity : ComponentActivity() {
         val m = 3.0 / 111.32
         val mLon = m / kotlin.math.cos(Math.toRadians((s + n) / 2))
         return doubleArrayOf(s - m, w - mLon, n + m, e + mLon)
+    }
+
+    // ---------- powrót tą samą drogą (Google Maps) ----------
+
+    /** Karta na ekranie głównym: jednym dotknięciem nawigacja do miejsca startu ostatniego dojazdu, tą samą drogą. */
+    @Composable
+    private fun ReturnCard(trips: List<TripRepository.Trip>) {
+        val outbound by produceState<List<TripRepository.Trip>?>(null, trips) {
+            value = withContext(Dispatchers.IO) { runCatching { ReturnRoute.outbound(trips) }.getOrNull() }
+        }
+        val out = outbound
+        if (out.isNullOrEmpty()) return
+        val km = out.sumOf { it.stats?.optDouble("distanceKm", 0.0) ?: 0.0 }
+        Surface(
+            shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.primaryContainer,
+            modifier = Modifier.fillMaxWidth().clickable { startReturn(out) }
+        ) {
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = CircleShape, color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(56.dp)) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("↩", style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Powrót tą samą drogą", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Do miejsca startu: ${out.first().title}" +
+                            " · %.0f km".format(Locale("pl"), km) +
+                            (if (out.size > 1) " · ${out.size} odcinki z postojami" else ""),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text("Otwiera nawigację Google Maps", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private suspend fun currentPosition(): Pair<Double, Double>? {
+        LiveTrip.state.value?.let { if (it.gpsOk) return it.lat to it.lon }
+        if (!has(Manifest.permission.ACCESS_FINE_LOCATION)) return null
+        return kotlinx.coroutines.withTimeoutOrNull(4000) {
+            kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(this@MainActivity)
+                    .getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, null)
+                    .addOnSuccessListener { loc -> if (cont.isActive) cont.resumeWith(Result.success(loc?.let { it.latitude to it.longitude })) }
+                    .addOnFailureListener { if (cont.isActive) cont.resumeWith(Result.success(null)) }
+            }
+        }
+    }
+
+    /** Buduje trasę powrotną z podanych tras dojazdu (od najstarszej) i otwiera Google Maps. */
+    private fun startReturn(outbound: List<TripRepository.Trip>) {
+        toast("Przygotowuję trasę powrotu…")
+        lifecycleScope.launch {
+            val here = runCatching { currentPosition() }.getOrNull()
+            val plan = withContext(Dispatchers.IO) { runCatching { ReturnRoute.plan(outbound, here?.first, here?.second) }.getOrNull() }
+            if (plan == null) { toast("Nie udało się odczytać trasy dojazdu."); return@launch }
+            runCatching { ReturnRoute.open(this@MainActivity, plan) }
+                .onFailure { toast("Nie udało się otworzyć Google Maps: ${it.message}") }
+        }
     }
 
     @SuppressLint("MissingPermission")

@@ -15,6 +15,8 @@ jako aktualizacja i trasy zostają w telefonie. Klucz jest jawny – trzymaj rep
 
 ## Historia wersji
 
+- **1.5** – „↩ Powrót tą samą drogą”: jednym dotknięciem nawigacja Google Maps do miejsca startu ostatniego
+  dojazdu przez punkty pośrednie z zapisanej trasy (do 9), z łączeniem krótkich postojów po drodze; także w menu ⋮ każdej trasy.
 - **1.4** – naprawa restartu aplikacji po START w pomiarze 0–100/100–150 (wykres rysował opisy osi poza obszarem);
   nowe **Punkty i nagrody**: ocena każdej trasy 0–100 i gwiazdki, punkty za km w limicie z mnożnikiem,
   poziomy (Kursant → Legenda szos), seria dobrych tras, 11 odznak; karta poziomu na ekranie głównym.
